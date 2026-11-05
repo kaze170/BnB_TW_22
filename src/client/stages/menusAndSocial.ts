@@ -519,11 +519,18 @@ async function startPracticeMatch(
 }
 
 /* ------------------------------------------------------------------ *
- * CTitleStage — white intro card + Wave/Title, auto-enters CLoginStage
+ * CTitleStage — nm.bik publisher bumper slot + Wave/Title, then CLoginStage
+ *
+ * The real client plays nm.bik here (BINK "BIKi", 800x600, 90 frames @ 30/1 fps
+ * = exactly 3.000 s). No Bink1 decoder is shipped, so the slot stays empty
+ * instead of being filled with a synthetic colour card: the jingle plays over
+ * the cleared frame and the stage advances after nm.bik's real runtime.
  * ------------------------------------------------------------------ */
 
+/** nm.bik runtime: 90 frames @ 30 fps = 3000 ms, and TICK_MS is 30 ms. */
+const TITLE_TICKS = Math.round((90 / 30) * (1000 / 30)); // 100 ticks = 3000 ms
+
 function renderTitleStage(state: ClientAppState): void {
-  const r = state.assets.renderer;
   const ui = state.ui;
 
   titleBootTicks++;
@@ -531,10 +538,8 @@ function renderTitleStage(state: ClientAppState): void {
     state.audio.playSfxById(21); // Wave/Title
   }
 
-  r.drawRect(0, 0, SCREEN_WIDTH, 600, [1, 1, 1, 1]);
-
   if (
-    titleBootTicks >= 48 ||
+    titleBootTicks >= TITLE_TICKS ||
     ui.mouseJustPressed ||
     ui.keysJustPressed.has("Enter") ||
     ui.keysJustPressed.has("Space") ||
@@ -1020,23 +1025,13 @@ function drawMinimapPreview(
   h: number,
 ): void {
   const r = state.assets.renderer;
-  r.drawRect(x, y, w, h, [0.02, 0.06, 0.14, 1]);
 
+  // Every one of the 319 Map/* files ships a native Etc/<Map>_mm minimap sprite,
+  // so there is no hand-drawn grid fallback -- only a label while it streams in.
   const mmKey = `Etc/${mapName.replace(/_/g, "")}_mm`;
   const mmSheet = state.assets.getSpriteSync("Fx", mmKey);
-  if (mmSheet) {
-    state.assets.drawSpriteFrame(mmSheet, 0, x + 2, y + 2);
-    r.drawText(mapName, x + w * 0.5, y + h - 16, [1, 0.95, 0.55, 1], {
-      align: "center",
-      bold: true,
-      maxWidth: w - 6,
-    });
-    return;
-  }
-
-  const mapObj = state.assets.mapCache.get(mapName.toLowerCase());
-  if (!mapObj) {
-    void state.assets.prefetchMapAssets(mapName);
+  if (!mmSheet) {
+    void state.assets.fetchEntry("Fx", mmKey);
     r.drawText(mapName, x + w * 0.5, y + h * 0.5 - 6, [0.85, 0.95, 1, 1], {
       align: "center",
       bold: true,
@@ -1045,32 +1040,7 @@ function drawMinimapPreview(
     return;
   }
 
-  const cw = Math.floor((w - 8) / 15);
-  const ch = Math.floor((h - 22) / 13);
-  const ox = x + Math.floor((w - cw * 15) * 0.5);
-  const oy = y + 4;
-
-  for (let row = 0; row < 13; row++) {
-    for (let col = 0; col < 15; col++) {
-      const hasObj = (mapObj.objectIds[row * 15 + col] ?? -1) >= 0;
-      r.drawRect(
-        ox + col * cw,
-        oy + row * ch,
-        cw - 1,
-        ch - 1,
-        hasObj
-          ? (row + col) % 2 === 0
-            ? [0.88, 0.56, 0.24, 1]
-            : [0.74, 0.44, 0.2, 1]
-          : (row + col) % 2 === 0
-            ? [0.22, 0.52, 0.28, 1]
-            : [0.18, 0.45, 0.24, 1],
-      );
-    }
-  }
-  for (const pt of mapObj.spawns) {
-    r.drawRect(ox + pt.col * cw + 1, oy + pt.row * ch + 1, cw - 2, ch - 2, [1, 0.95, 0.3, 1]);
-  }
+  state.assets.drawSpriteFrame(mmSheet, 0, x + 2, y + 2);
   r.drawText(mapName, x + w * 0.5, y + h - 16, [1, 0.95, 0.55, 1], {
     align: "center",
     bold: true,
@@ -1986,7 +1956,10 @@ function renderGlobalModals(state: ClientAppState): void {
   const r = state.assets.renderer;
   const ui = state.ui;
 
-  r.drawRect(0, 0, SCREEN_WIDTH, 600, [0, 0, 0, 0.52]);
+  // Native Etc/StageOpacity veil (solid black 10x10 tile, stretched + alpha-blended)
+  if (!ui.drawStretchedSprite(state.assets, "Etc/StageOpacity", 0, 0, SCREEN_WIDTH, 600, [1, 1, 1, 0.52])) {
+    r.drawRect(0, 0, SCREEN_WIDTH, 600, [0, 0, 0, 0.52]);
+  }
 
   switch (state.modal) {
     case "newId": {

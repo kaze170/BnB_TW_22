@@ -423,6 +423,57 @@ export class UiInputSystem {
   /**
    * Native 9-slice Etc/TextBox renderer (f0..f8, 4x4 pieces) from Fx.idd!
    */
+  /**
+   * Stretches a single native sprite over an arbitrary rectangle. Used for full-screen
+   * veils such as Etc/StageOpacity (a solid 10x10 black tile the engine alpha-blends).
+   */
+  public drawStretchedSprite(
+    assets: ClientAssetManager,
+    path: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    color: RGBA = [1, 1, 1, 1],
+  ): boolean {
+    const sheet = assets.getSpriteSync("Fx", path);
+    if (!sheet || sheet.frames.length === 0) return false;
+    return drawSheetFrameStretched(this.renderer, sheet, 0, x, y, w, h, color);
+  }
+
+  /**
+   * Generic native 9-slice panel. The sheet must hold the 9 pieces in the
+   * Crazy-Arcade order: 0=TL 1=top 2=TR 3=left 4=centre 5=right 6=BL 7=bottom 8=BR.
+   */
+  public drawNineSliceSprite(
+    assets: ClientAssetManager,
+    path: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    corner = 10,
+    color: RGBA = [1, 1, 1, 1],
+  ): boolean {
+    const sheet = assets.getSpriteSync("Fx", path);
+    if (!sheet || sheet.frames.length < 9) return false;
+    const c = Math.min(corner, Math.floor(w / 2), Math.floor(h / 2));
+    if (c <= 0) return false;
+    const iw = Math.max(1, w - c * 2);
+    const ih = Math.max(1, h - c * 2);
+    let ok = true;
+    ok = drawSheetFrameStretched(this.renderer, sheet, 0, x, y, c, c, color) || ok;
+    ok = drawSheetFrameStretched(this.renderer, sheet, 1, x + c, y, iw, c, color) || ok;
+    ok = drawSheetFrameStretched(this.renderer, sheet, 2, x + w - c, y, c, c, color) || ok;
+    ok = drawSheetFrameStretched(this.renderer, sheet, 3, x, y + c, c, ih, color) || ok;
+    ok = drawSheetFrameStretched(this.renderer, sheet, 4, x + c, y + c, iw, ih, color) || ok;
+    ok = drawSheetFrameStretched(this.renderer, sheet, 5, x + w - c, y + c, c, ih, color) || ok;
+    ok = drawSheetFrameStretched(this.renderer, sheet, 6, x, y + h - c, c, c, color) || ok;
+    ok = drawSheetFrameStretched(this.renderer, sheet, 7, x + c, y + h - c, iw, c, color) || ok;
+    ok = drawSheetFrameStretched(this.renderer, sheet, 8, x + w - c, y + h - c, c, c, color) || ok;
+    return ok;
+  }
+
   public drawNineSliceTextBox(
     assets: ClientAssetManager,
     x: number,
@@ -451,7 +502,15 @@ export class UiInputSystem {
   }
 
   /**
-   * Native 9-slice ChatBalloon (Etc/ChatBalloon or Game/ChatBalloon) speech bubble!
+   * Native 9-slice ChatBalloon (Etc/ChatBalloon or Game/ChatBalloon) speech bubble.
+   *
+   * The 16 frames are one nine-slice per size, laid out as:
+   *   f0 TL corner (10x10)   f4 top edge (12x10)     f1 TR corner (10x10)
+   *  f14 left edge (10x12)  f11 centre (12x12, black) f15 right edge (10x12)
+   *   f2 BL corner (10x10)   f5 bottom edge (12x10)   f3 BR corner (10x10)
+   * (f8/f9/f10 are the 13px-tall variants and f6/f7/f12/f13 the 6px-wide narrow ones.)
+   * The border is RGB(197,197,197) and the interior darkens to RGB(46,46,46) at the
+   * edges and pure black in the centre piece, so the label is drawn in white.
    */
   public drawChatBalloon(
     assets: ClientAssetManager,
@@ -461,33 +520,32 @@ export class UiInputSystem {
     bottomY: number,
   ): void {
     if (!text) return;
-    const tw = Math.min(180, Math.max(36, this.renderer.measureText(text) + 18));
-    const th = 24;
+    const tw = Math.min(180, Math.max(40, this.renderer.measureText(text) + 24));
+    const th = 26;
     const bx = Math.round(Math.max(8, Math.min(SCREEN_WIDTH - tw - 8, centerX - tw * 0.5)));
     const by = Math.round(bottomY - th - 8);
 
     const sheet = assets.getSpriteSync("Fx", entryPath);
     if (sheet && sheet.frames.length >= 16) {
-      const c = 8;
-      const iw = Math.max(4, tw - c * 2);
-      const ih = Math.max(4, th - c * 2);
-      this.renderer.drawRect(bx + 3, by + 3, tw - 6, th - 6, [1, 1, 1, 0.94]);
+      const c = 10;
+      const iw = Math.max(1, tw - c * 2);
+      const ih = Math.max(1, th - c * 2);
       drawSheetFrameStretched(this.renderer, sheet, 0, bx, by, c, c);
       drawSheetFrameStretched(this.renderer, sheet, 4, bx + c, by, iw, c);
       drawSheetFrameStretched(this.renderer, sheet, 1, bx + tw - c, by, c, c);
-      drawSheetFrameStretched(this.renderer, sheet, 6, bx, by + c, c, ih);
-      drawSheetFrameStretched(this.renderer, sheet, 7, bx + tw - c, by + c, c, ih);
+      drawSheetFrameStretched(this.renderer, sheet, 14, bx, by + c, c, ih);
+      drawSheetFrameStretched(this.renderer, sheet, 11, bx + c, by + c, iw, ih);
+      drawSheetFrameStretched(this.renderer, sheet, 15, bx + tw - c, by + c, c, ih);
       drawSheetFrameStretched(this.renderer, sheet, 2, bx, by + th - c, c, c);
       drawSheetFrameStretched(this.renderer, sheet, 5, bx + c, by + th - c, iw, c);
       drawSheetFrameStretched(this.renderer, sheet, 3, bx + tw - c, by + th - c, c, c);
-      assets.drawSpriteFrame(sheet, 15, Math.round(centerX - 5), by + th - 2);
     } else {
       this.drawNineSliceTextBox(assets, bx, by, tw, th);
     }
 
-    this.renderer.drawText(text, bx + tw * 0.5, by + 6, [0.05, 0.12, 0.26, 1], {
+    this.renderer.drawText(text, bx + tw * 0.5, by + (th - 12) * 0.5, [1, 1, 1, 1], {
       align: "center",
-      maxWidth: tw - 12,
+      maxWidth: tw - 16,
       outlined: false,
     });
   }
@@ -635,7 +693,14 @@ export class UiInputSystem {
     // 1. Native CNoticeDlg (Etc/Dlg_Notice 320x252 + Etc/BtOk 102x30)
     if (this.noticeQueue.length > 0) {
       const msg = this.noticeQueue[0]!;
-      this.renderer.drawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, [0, 0, 0, 0.42]);
+      // Native Etc/StageOpacity veil (solid black 10x10 tile, stretched + alpha-blended)
+      if (
+        !this.drawStretchedSprite(assets, "Etc/StageOpacity", 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, [
+          1, 1, 1, 0.42,
+        ])
+      ) {
+        this.renderer.drawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, [0, 0, 0, 0.42]);
+      }
       const dx = 240;
       const dy = 174;
       const dlg = assets.getSpriteSync("Fx", "Etc/Dlg_Notice");
@@ -683,7 +748,9 @@ export class UiInputSystem {
 
       const ttSheet = assets.getSpriteSync("Fx", "GlobalUI/Glob_ToolTip");
       if (ttSheet && ttSheet.frames.length >= 8) {
-        this.renderer.drawRect(tx + 3, ty + 3, tw - 6, th - 6, [0.01, 0.14, 0.34, 0.94]);
+        // The native Glob_ToolTip border pieces are solid RGB(0, 55, 119) and the sheet
+        // has no centre piece, so the interior is filled with that exact colour.
+        this.renderer.drawRect(tx + 3, ty + 3, tw - 6, th - 6, [0, 55 / 255, 119 / 255, 1]);
         const cw = Math.min(15, Math.floor(tw * 0.5));
         const ch = 5;
         const iw = Math.max(1, tw - cw * 2);

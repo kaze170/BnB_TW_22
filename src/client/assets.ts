@@ -149,6 +149,8 @@ export class ClientAssetManager {
       "Game/Draw",
       "Game/HurryUp",
       "Game/ResultInfoBar",
+      "Game/PatResultDlg",
+      "AIaider/RedZone",
       // GlobalUI bottom bar
       "GlobalUI/Dlg_Back",
       "GlobalUI/BtMenu",
@@ -294,6 +296,7 @@ export class ClientAssetManager {
       "Etc/TextBox",
       "Etc/ChatBalloon",
       "Etc/Dlg_Notice",
+      "Etc/StageOpacity",
       "Etc/Dlg_Option",
       "Etc/BtCheckBox",
       "Etc/VScroll_BtUp",

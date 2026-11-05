@@ -100,12 +100,12 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
   const ui = state.ui;
   const world = state.world;
 
-  // 1. Verbatim 800x600 Game/CAStage JPEG frame
+  // 1. Verbatim 800x600 Game/CAStage JPEG frame. Its inner 600x520 playfield area is
+  //    solid RGB(100,100,100) -- that flat grey IS the authentic map backdrop, so no
+  //    synthetic base colour is drawn underneath the tiles.
   const bg = state.assets.getJpegSync("Fx", "Game/CAStage");
   if (bg) {
     r.drawQuad(bg, 0, 0, 800, 600);
-  } else {
-    r.drawRect(0, 0, 800, 600, [0.05, 0.25, 0.56, 1]);
   }
 
   if (!world) {
@@ -131,42 +131,32 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
     state.audio.toggleMute();
   }
 
-  // Playfield base backdrop (20, 41, 600, 520)
-  r.drawRect(ox, oy, GRID_COLS * CELL_SIZE, GRID_ROWS * CELL_SIZE, [0.16, 0.34, 0.18, 1]);
-
   // 2. Ground tiles (15x13) + Survival RedZone
+  const redZoneSheet = state.assets.getSpriteSync("Fx", "AIaider/RedZone");
   for (let row = 0; row < GRID_ROWS; row++) {
     for (let col = 0; col < GRID_COLS; col++) {
       const idx = world.cellIdx(row, col);
       const ax = ox + cellToAnchorX(col);
       const ay = oy + cellToAnchorY(row);
 
+      // Cells with no ground tile simply leave the Game/CAStage grey backdrop visible,
+      // exactly like the original client (e.g. the open water of Tomb12 / Ocean04).
       const gid = world.groundIds[idx]!;
-      let drewGround = false;
       if (gid >= 0) {
         const tpl = state.assets.fxTemplates[gid];
         if (tpl) {
-          drewGround = state.assets.drawFxTemplateState(tpl, "Default", world.tick, ax, ay);
+          state.assets.drawFxTemplateState(tpl, "Default", world.tick, ax, ay);
         }
-      }
-      if (!drewGround) {
-        const checker = (row + col) % 2 === 0 ? 0.24 : 0.21;
-        r.drawRect(ox + col * CELL_SIZE, oy + row * CELL_SIZE, CELL_SIZE, CELL_SIZE, [
-          checker * 0.75,
-          checker * 1.35,
-          checker * 0.7,
-          1,
-        ]);
       }
 
       if (world.redZoneGrid[idx] !== 0) {
-        r.drawRect(
-          ox + col * CELL_SIZE,
-          oy + row * CELL_SIZE,
-          CELL_SIZE,
-          CELL_SIZE,
-          [0.72, 0.1, 0.1, 0.55],
-        );
+        // Native AIaider/RedZone: a 40x40 hatched overlay whose 4 frames pulse
+        // 60 -> 123 -> 187 -> 250 red. Its pivot (0, 39) matches cellToAnchorY, so it
+        // lands exactly on the cell using the same anchor as the ground tiles.
+        if (redZoneSheet && redZoneSheet.frames.length > 0) {
+          const rf = Math.floor(world.tick / 8) % redZoneSheet.frames.length;
+          state.assets.drawSpriteFrame(redZoneSheet, rf, ax, ay);
+        }
       }
     }
   }
@@ -608,7 +598,9 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
   // 9. Authentic Match Result Overlay using Game/Win, Game/Lose, Game/Draw & Game/ResultInfoBar!
   if (state.matchResult) {
     const mr = state.matchResult;
-    r.drawRect(ox, oy, 600, 520, [0, 0, 0, 0.52]);
+    // Native Game/PatResultDlg 9-slice dialog (10px corners, black centre) covers the
+    // playfield behind the Win/Lose/Draw banner and the per-player ResultInfoBar rows.
+    ui.drawNineSliceSprite(state.assets, "Game/PatResultDlg", ox, oy, 600, 520, 10);
 
     const myWin =
       mr.winningTeam >= 100
