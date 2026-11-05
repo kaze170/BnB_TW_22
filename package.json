@@ -1,0 +1,20 @@
+{
+  "name": "bnb-tw-22-webgpu",
+  "version": "22.0.0",
+  "description": "Crazy Arcade BnB Taiwan v22 - Complete CA.exe Port (TypeScript 7.1.0-beta + Bun 1.4.4 + WebGPU)",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run build:client && bun run src/server/index.ts",
+    "start": "bun run build:client && bun run src/server/index.ts",
+    "build:client": "bun build src/client/main.ts --outfile public/dist/client.js --target browser",
+    "typecheck": "bun x tsc --noEmit",
+    "verify:packs": "bun run scripts/verifyPacks.ts",
+    "verify:e2e": "bun run scripts/verifyE2E.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@webgpu/types": "^0.1.74",
+    "typescript": "7.1.0-beta"
+  }
+}
