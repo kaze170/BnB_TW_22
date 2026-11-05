@@ -77,18 +77,19 @@ function lerpCoord(prev: number, cur: number, alpha: number): number {
   return prev + (cur - prev) * alpha;
 }
 
+// Real Fx.idd sprite paths, taken from Attr/ItemAttr.templateName / the Fx pack listing.
 function activeItemSpritePath(kind: ActiveItemKind): string | null {
   switch (kind) {
     case ActiveItemKind.Needle:
-      return "Item/ItemNiddle";
+      return "Item/Niddle";
     case ActiveItemKind.Dart:
-      return "Item/ItemDart";
+      return "Item/Dart";
     case ActiveItemKind.Spring:
-      return "Item/ItemSpring";
+      return "Item/Spring";
     case ActiveItemKind.Shield:
       return "Item/Shield";
     case ActiveItemKind.Remote:
-      return "Bomb/BombRadio";
+      return "Item/RadioBomb";
     default:
       return null;
   }
@@ -212,6 +213,8 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
         state.assets.drawSpriteFrame(shadowSheet, 0, ax, oy + cellToAnchorY(it.row), [1, 1, 1, 0.45]);
       }
 
+      // Attr/ItemAttr.templateName is a direct Fx.idd sprite path (e.g. "Item/Bomb");
+      // ObjectTable templates (e.g. "bomb/bomb") are only used as a secondary lookup.
       const tpl =
         state.assets.fxByName.get(it.templateName.toLowerCase()) ??
         state.assets.fxByName.get(it.itemName.toLowerCase());
@@ -220,7 +223,9 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
         drew = state.assets.drawFxTemplateState(tpl, 0, it.animTick, ax, ay);
       }
       if (!drew) {
-        const sheet = state.assets.getSpriteSync("Fx", it.itemName);
+        const sheet =
+          state.assets.getSpriteSync("Fx", it.templateName) ??
+          state.assets.getSpriteSync("Fx", it.itemName);
         if (sheet) {
           const fi = Math.floor(it.animTick / 6) % Math.max(1, sheet.frames.length);
           state.assets.drawSpriteFrame(sheet, fi, ax, ay);
@@ -315,10 +320,6 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
       if (mon.trappedTicks > 0) {
         const bubTpl = state.assets.fxByName.get("bomb/bubble");
         if (bubTpl) state.assets.drawFxTemplateState(bubTpl, "00 Lock", mon.aiTick, mx - 20, my);
-      }
-      if (mon.maxHp > 1) {
-        r.drawRect(mx - 22, my - 56, 44, 5, [0.05, 0.08, 0.14, 0.9]);
-        r.drawRect(mx - 21, my - 55, Math.floor(42 * (mon.hp / mon.maxHp)), 3, [1, 0.28, 0.25, 1]);
       }
     }
 
@@ -434,12 +435,12 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
       state.assets.drawFxTemplateState(bombTpl, "0 Default", world.tick, ax, ay);
     }
   }
-  const dartSheet = state.assets.getSpriteSync("Fx", "Item/ItemDart");
+  // Native thrown-dart projectile: Item/ThrownDart, frames are ordered Left/Up/Right/Down
+  const dartSheet = state.assets.getSpriteSync("Fx", "Item/ThrownDart");
   for (const dt of world.darts) {
     if (dartSheet && dartSheet.frames.length > 0) {
-      state.assets.drawSpriteFrame(dartSheet, 0, ox + dt.x - 12, oy + dt.y + 8);
-    } else {
-      r.drawRect(ox + dt.x - 4, oy + dt.y - 4, 8, 8, [1, 0.95, 0.25, 1]);
+      const fi = Math.max(0, Math.min(dartSheet.frames.length - 1, dt.dir));
+      state.assets.drawSpriteFrame(dartSheet, fi, ox + dt.x + 20, oy + dt.y + 40);
     }
   }
 
@@ -474,12 +475,12 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
       state.assets.drawSpriteFrame(teamColSheet, tFrame, 658, sy, [1, 1, 1, isDead ? 0.45 : 0.9]);
     }
 
-    // Portrait inside left dark box (661, sy + 6, 42, 31)
+    // Portrait centred in the left dark box (661, sy + 6, 42, 31)
     state.assets.drawCharacterPortrait(
       b.charIndex,
       b.team,
-      670,
-      sy + 12,
+      682,
+      sy + 21,
       isDead ? 0.35 : 1.0,
     );
 

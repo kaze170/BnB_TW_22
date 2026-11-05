@@ -263,12 +263,15 @@ export class ClientAssetManager {
       "Game/HurryUp",
       "Game/ResultInfoBar",
       "Game/SelfIndicator",
+      // Portrait layers as they really exist in Fx.idd -- not every character has
+      // an A-layer "Adjust" half, and C02/C06/C10/C11 add an extra C layer.
       "Character/C00-Portrait_ALayerAdjust",
       "Character/C00-Portrait_ALayerStatic",
       "Character/C01-Portrait_ALayerAdjust",
       "Character/C01-Portrait_ALayerStatic",
-      "Character/C02-Portrait_ALayerAdjust",
       "Character/C02-Portrait_ALayerStatic",
+      "Character/C02-Portrait_CLayerAdjust",
+      "Character/C02-Portrait_CLayerStatic",
       "Character/C03-Portrait_ALayerAdjust",
       "Character/C03-Portrait_ALayerStatic",
       "Character/C04-Portrait_ALayerAdjust",
@@ -277,14 +280,15 @@ export class ClientAssetManager {
       "Character/C05-Portrait_ALayerStatic",
       "Character/C06-Portrait_ALayerAdjust",
       "Character/C06-Portrait_ALayerStatic",
+      "Character/C06-Portrait_CLayerAdjust",
       "Character/C07-Portrait_ALayerAdjust",
       "Character/C07-Portrait_ALayerStatic",
       "Character/C08-Portrait_ALayerAdjust",
       "Character/C08-Portrait_ALayerStatic",
       "Character/C09-Portrait_ALayerAdjust",
       "Character/C09-Portrait_ALayerStatic",
-      "Character/C10-Portrait_ALayerAdjust",
       "Character/C10-Portrait_ALayerStatic",
+      "Character/C10-Portrait_CLayerStatic",
       // Shop, Gachapon, Gift, MyInfo, Market, Exchange, Messenger, Tutorial, Credit & Common UI
       "Etc/Cursor",
       "Etc/TextBox",
@@ -329,9 +333,12 @@ export class ClientAssetManager {
       "Game/ChatBalloon",
       "Game/Kill_Image",
       "Item/Shield",
-      "Item/ItemDart",
-      "Item/ItemNiddle",
-      "Item/ItemSpring",
+      "Item/ShieldOn",
+      "Item/ShieldFlash",
+      "Item/Dart",
+      "Item/Niddle",
+      "Item/Spring",
+      "Item/RadioBomb",
       "Shop/S_BtItemSlot03",
       "Shop/S_MoneyCount",
       "Shop/S_ScrNum",
@@ -759,29 +766,50 @@ export class ClientAssetManager {
     for (let i = 0; i < parsed.objectIds.length; i++) addTpl(parsed.objectIds[i]!);
 
     // Also prefetch common items & ships
+    // Real Fx.idd sprite paths (NOT ObjectTable template aliases!)
     const commonSprites = [
-      "Item/ItemBomb",
-      "Item/ItemWater",
-      "Item/ItemSkate",
-      "Item/ItemPotionMax",
-      "Item/ItemRedDevil",
-      "Item/ItemShoe",
-      "Item/ItemGlove",
-      "Item/ItemNiddle",
-      "Item/ItemDart",
-      "Item/ItemSpring",
+      "Item/Bomb",
+      "Item/Fire",
+      "Item/Roller",
+      "Item/Shoe",
+      "Item/Punch",
+      "Item/MaxPower",
+      "Item/Potion",
+      "Item/RedDevil",
+      "Item/Niddle",
+      "Item/Dart",
+      "Item/ThrownDart",
+      "Item/Spring",
       "Item/Shield",
+      "Item/ShieldOn",
+      "Item/ShieldFlash",
+      "Item/Owl",
+      "Item/Turtle0",
+      "Item/Turtle1",
+      "Item/Airship",
+      "Item/CoinBronze",
       "Item/CoinSilver",
       "Item/CoinGold",
       "Ship/Owl-Down",
       "Ship/Owl-Up",
       "Ship/Owl-Left",
       "Ship/Owl-Right",
-      "Ship/Turtle-Down",
-      "Ship/Turtle-Up",
-      "Ship/Turtle-Left",
-      "Ship/Turtle-Right",
-      "Ship/UFO",
+      "Ship/Turtle0-Down",
+      "Ship/Turtle0-Up",
+      "Ship/Turtle0-Left",
+      "Ship/Turtle0-Right",
+      "Ship/Turtle1-Down",
+      "Ship/Turtle1-Up",
+      "Ship/Turtle1-Left",
+      "Ship/Turtle1-Right",
+      "Ship/Airship-Down",
+      "Ship/Airship-Up",
+      "Ship/Airship-Left",
+      "Ship/Airship-Right",
+      "Ship/Tank_down",
+      "Ship/Tank_up",
+      "Ship/Tank_left",
+      "Ship/Tank_right",
       "Game/CAStage",
     ];
     for (const s of commonSprites) needed.add(s);
@@ -834,6 +862,14 @@ export class ClientAssetManager {
     await this.prefetchBatch("Fx", [...paths]);
   }
 
+  /**
+   * Draws the in-game HUD portrait. A portrait is built from up to three layers
+   * (A/B/C); each layer has a team-tinted "LayerAdjust" half and a fixed-colour
+   * "LayerStatic" half, and every half shares the same pivot origin -- so they must
+   * all be drawn at ONE anchor. (x, y) is the CENTRE of the target box: the union
+   * bounding box of the loaded layers is centred there, which keeps every character
+   * aligned regardless of how many layers it has.
+   */
   public drawCharacterPortrait(
     charIndex: number,
     team: number,
@@ -842,14 +878,43 @@ export class ClientAssetManager {
     alpha = 1,
   ): boolean {
     const code = this.resolveCharacterSpriteCode(charIndex);
-    const basePath = `Character/${code}-Portrait_A`;
-    const adj = this.getSpriteSync("Fx", `${basePath}LayerAdjust`, team);
-    const sta = this.getSpriteSync("Fx", `${basePath}LayerStatic`);
+    const sheets: GpuSpriteSheet[] = [];
+    for (const layer of ["A", "B", "C"] as const) {
+      const base = `Character/${code}-Portrait_${layer}`;
+      const adj = this.getSpriteSync("Fx", `${base}LayerAdjust`, team);
+      const sta = this.getSpriteSync("Fx", `${base}LayerStatic`);
+      if (sta) sheets.push(sta);
+      if (adj) sheets.push(adj);
+    }
+    if (sheets.length === 0) {
+      void this.prefetchCharacterBase(charIndex);
+      return false;
+    }
+
+    // Union bounding box in pivot-origin space: [left - pivotX, right - pivotX] x [top - pivotY, bottom - pivotY]
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const s of sheets) {
+      const f = s.frames[0];
+      if (!f) continue;
+      x0 = Math.min(x0, f.left - f.pivotX);
+      y0 = Math.min(y0, f.top - f.pivotY);
+      x1 = Math.max(x1, f.right - f.pivotX);
+      y1 = Math.max(y1, f.bottom - f.pivotY);
+    }
+    if (!Number.isFinite(x0)) {
+      void this.prefetchCharacterBase(charIndex);
+      return false;
+    }
+
+    const ox = x - (x0 + x1) / 2;
+    const oy = y - (y0 + y1) / 2;
     let drew = false;
-    // Note: Portrait_A has pivot (-9, -12), so passing (x - 9, y - 12) places top-left directly at (x, y)
-    if (adj) drew = this.drawSpriteFrame(adj, 0, x - 9, y - 12, [1, 1, 1, alpha]) || drew;
-    if (sta) drew = this.drawSpriteFrame(sta, 0, x - 9, y - 12, [1, 1, 1, alpha]) || drew;
-    if (!drew) void this.prefetchCharacterBase(charIndex);
+    for (const s of sheets) {
+      drew = this.drawSpriteFrame(s, 0, ox, oy, [1, 1, 1, alpha]) || drew;
+    }
     return drew;
   }
 
@@ -1010,12 +1075,17 @@ export class ClientAssetManager {
     if (!opts.lobbyPose && (opts.mountType ?? -1) >= 0) {
       const dirNames = ["Left", "Up", "Right", "Down"];
       const dName = dirNames[safeDir] ?? "Down";
+      // Real Fx.idd ship sprites: Owl, Turtle0, Turtle1(super), Airship(ufo), Tank
       const mountPath =
-        opts.mountType === 2
-          ? "Ship/UFO"
-          : opts.mountType === 0
-            ? `Ship/Owl-${dName}`
-            : `Ship/Turtle-${dName}`;
+        opts.mountType === 0
+          ? `Ship/Owl-${dName}`
+          : opts.mountType === 1
+            ? `Ship/Turtle0-${dName}`
+            : opts.mountType === 4
+              ? `Ship/Turtle1-${dName}`
+              : opts.mountType === 3
+                ? `Ship/Tank_${dName.toLowerCase()}`
+                : `Ship/Airship-${dName}`;
       const mSheet = this.getSpriteSync("Fx", mountPath);
       if (mSheet) {
         const mf = Math.floor(opts.animTick / 6) % Math.max(1, mSheet.frames.length);

@@ -415,23 +415,25 @@ export class GameWorld {
         }
       }
     } else {
+      // Exactly the Attr/ItemAttr "name" column from Fx.idd so every pickup
+      // resolves to a real ObjectTable template (Item/*) and renders natively.
       const defaults: [string, number][] = [
         ["Item/ItemBomb", 14],
-        ["Item/ItemWater", 12],
-        ["Item/ItemSkate", 12],
-        ["Item/ItemPotionMax", 3],
-        ["Item/ItemRedDevil", 2],
+        ["Item/ItemPotion", 12],
+        ["Item/ItemRoller", 12],
+        ["Item/ItemMaxPower", 3],
+        ["RedDevil", 2],
         ["Item/ItemShoe", 4],
-        ["Item/ItemGlove", 2],
+        ["Item/ItemPunch", 2],
         ["Item/ItemNiddle", 3],
         ["Item/ItemDart", 2],
-        ["Item/ItemSpring", 2],
+        ["Spring", 2],
         ["Item/ItemShield", 2],
-        ["Item/ItemShipOwl", 2],
-        ["Item/ItemShipTurtle", 2],
-        ["Item/ItemShipUFO", 1],
-        ["Item/CoinSilver", 6],
-        ["Item/CoinGold", 4],
+        ["Item/ItemOwl", 2],
+        ["Item/ItemTurtle0", 2],
+        ["Item/ItemAirship", 1],
+        ["LucciSilver", 6],
+        ["LucciGold", 4],
       ];
       for (const [name, cnt] of defaults) {
         for (let i = 0; i < cnt; i++) this.hiddenItemPool.push(name);
@@ -1300,7 +1302,12 @@ export class GameWorld {
 
     if (lower.includes("itembomb") || lower.includes("balloon")) {
       b.bombsCur = Math.min(b.bombsMax, b.bombsCur + 1);
-    } else if (lower.includes("potionmax") || lower.includes("watermax") || lower.includes("powermax")) {
+    } else if (
+      lower.includes("potionmax") ||
+      lower.includes("watermax") ||
+      lower.includes("powermax") ||
+      lower.includes("maxpower")
+    ) {
       b.powerCur = b.powerMax;
     } else if (lower.includes("itemwater") || lower.includes("potion")) {
       b.powerCur = Math.min(b.powerMax, b.powerCur + 1);
@@ -1311,7 +1318,7 @@ export class GameWorld {
       b.speedCur = Math.min(b.speedMax, b.speedCur + 1);
     } else if (lower.includes("shoe") || lower.includes("kick")) {
       b.canKick = true;
-    } else if (lower.includes("glove") || lower.includes("throw")) {
+    } else if (lower.includes("glove") || lower.includes("throw") || lower.includes("punch")) {
       b.canThrow = true;
     } else if (lower.includes("niddle") || lower.includes("needle")) {
       b.ctrlItem = ActiveItemKind.Needle;
@@ -1337,7 +1344,7 @@ export class GameWorld {
     } else if (lower.includes("devil")) {
       b.devilTicks = DEVIL_DURATION_TICKS; // 244 ticks
       this.emitSound(55); // Wave/GreenDevil
-    } else if (lower.includes("ufo")) {
+    } else if (lower.includes("ufo") || lower.includes("airship")) {
       b.mountType = 2;
       b.mountSpeed = 10;
       this.emitSound(13); // Wave/ItemShip01
@@ -1345,7 +1352,11 @@ export class GameWorld {
       b.mountType = 0;
       b.mountSpeed = 6;
       this.emitSound(12); // Wave/ItemShip00
-    } else if (lower.includes("superturtle") || lower.includes("pirate")) {
+    } else if (
+      lower.includes("superturtle") ||
+      lower.includes("pirate") ||
+      lower.includes("turtle1")
+    ) {
       b.mountType = 4;
       b.mountSpeed = 8;
       this.emitSound(12);

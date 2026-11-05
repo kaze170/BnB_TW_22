@@ -110,7 +110,64 @@ if (bazziSampleKey) {
   console.log(`[I16] Bomb/Bomb00 frames=${bombI16.frameCount}`);
 }
 
-// 5. Decode .fft font + .ssd + nm.bik
+// 5. Regression guard: every hard-coded asset path in src/client must really exist in the packs,
+//    and every Attr/ItemAttr.templateName must resolve to a real sprite (or an ObjectTable template).
+{
+  const { readdirSync, statSync } = await import("node:fs");
+  const { join } = await import("node:path");
+
+  const fxTopDirs = new Set(
+    [...fxIdx.entries.keys()].map((k) => k.split("/")[0]!),
+  );
+  const otTemplateNames = new Set([
+    ...fxOT.byName.keys(),
+    ...charOT.byName.keys(),
+    ...emoOT.byName.keys(),
+  ]);
+
+  const walk = (dir: string): string[] =>
+    readdirSync(dir).flatMap((e) => {
+      const full = join(dir, e);
+      return statSync(full).isDirectory() ? walk(full) : full.endsWith(".ts") ? [full] : [];
+    });
+
+  const badPaths: string[] = [];
+  let checkedPaths = 0;
+  for (const file of walk("src/client")) {
+    const src = readFileSync(file, "utf8");
+    for (const m of src.matchAll(/"([A-Za-z][A-Za-z0-9_]*\/[A-Za-z0-9_\-\.]+)"/g)) {
+      const p = m[1]!;
+      if (!fxTopDirs.has(p.split("/")[0]!)) continue;
+      checkedPaths++;
+      if (otTemplateNames.has(p.toLowerCase())) continue; // ObjectTable template alias
+      if (!lookupPackEntry(fxIdx, p)) badPaths.push(`${file}: ${p}`);
+    }
+  }
+  if (badPaths.length > 0) {
+    throw new Error(
+      `Hard-coded asset paths missing from Fx.idd:\n  ${badPaths.join("\n  ")}`,
+    );
+  }
+  console.log(`[Assets] ${checkedPaths} hard-coded client asset paths all exist in Fx.idd`);
+
+  // Attr/ItemAttr carries 11 "Icon/EventItem00..10" rows for seasonal events that were
+  // never shipped inside this build's Fx.idd -- they are weight-0 and unreachable.
+  const EVENT_ITEM_ONLY = /^Icon\/EventItem\d\d$/;
+  let badItems = 0;
+  for (const it of itemAttr.items) {
+    if (lookupPackEntry(fxIdx, it.templateName)) continue;
+    if (otTemplateNames.has(it.templateName.toLowerCase())) continue;
+    if (EVENT_ITEM_ONLY.test(it.templateName)) continue;
+    badItems++;
+    console.log(`  ! ItemAttr "${it.name}" template "${it.templateName}" resolves to nothing`);
+  }
+  if (badItems > 0) {
+    throw new Error(`${badItems} Attr/ItemAttr entries have unresolvable templates`);
+  }
+  console.log(`[Assets] All ${itemAttr.items.length} Attr/ItemAttr templates resolve to real sprites`);
+}
+
+// 6. Decode .fft font + .ssd + nm.bik
 const fft = new FftFont("CxUni", new Uint8Array(readFileSync("CxUni.fft")));
 const gWater = fft.decodeGlyph("水".charCodeAt(0), true);
 const csys = parseStringTableBuffer(decompressSync(new Uint8Array(readFileSync("csysstr.ssd"))));
