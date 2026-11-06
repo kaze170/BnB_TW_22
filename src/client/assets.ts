@@ -1,5 +1,5 @@
 import { CHARACTER_SPRITE_CODES, Direction } from "../shared/constants.ts";
-import { BinaryReader } from "../shared/crypto.ts";
+import { BinaryReader, decompressSmartStreamAsync } from "../shared/crypto.ts";
 import { FftFont } from "../shared/formats/fft.ts";
 import {
   type BikVideoHeader,
@@ -12,6 +12,7 @@ import {
   parseBomberAttr,
   parseGameMap,
   parseItemAttr,
+  parseStringTableBuffer,
 } from "../shared/formats/gameData.ts";
 import {
   type DecodedI16,
@@ -52,6 +53,13 @@ export class ClientAssetManager {
   public emoTemplates: ObjectTemplateEntry[] = [];
   public emoByName = new Map<string, ObjectTemplateEntry>();
 
+  /**
+   * The authentic Taiwanese UI strings from csysstr.ssd (5336 entries), e.g.
+   * StateLose="敗北", StateLocked="咕嚕嚕", StateWin="勝利". Loaded from
+   * /api/raw/csysstr.ssd so no hand-written English ever reaches the HUD.
+   */
+  public sysStrings = new Map<string, string>();
+
   public bombers: BomberCharacterAttr[] = [];
   public ships: ShipAttr[] = [];
   public itemsByName = new Map<string, ItemAttrEntry>();
@@ -86,6 +94,7 @@ export class ClientAssetManager {
 
   public async initCore(onProgress?: (label: string, pct: number) => void): Promise<void> {
     onProgress?.("正在載入字型 (CxUni.fft)...", 10);
+    void this.loadSystemStrings();
     const [uniRes, boldRes, bootRes] = await Promise.all([
       fetch("/api/raw/CxUni.fft"),
       fetch("/api/raw/CxUniBold.fft"),
@@ -717,6 +726,25 @@ export class ClientAssetManager {
       t -= delay;
     }
     return state.frames[state.frames.length - 1]!.frameIndex;
+  }
+
+  /** Loads csysstr.ssd (CA.exe's own UI string table) so HUD labels are authentic. */
+  public async loadSystemStrings(): Promise<void> {
+    try {
+      const res = await fetch("/api/raw/csysstr.ssd");
+      if (!res.ok) return;
+      const raw = new Uint8Array(await res.arrayBuffer());
+      const table = parseStringTableBuffer(await decompressSmartStreamAsync(raw));
+      for (const [k, v] of table) this.sysStrings.set(k, v);
+    } catch {
+      // Offline / not ready -- callers fall back to a sensible label.
+    }
+  }
+
+  /** Looks up an authentic CA.exe UI string, falling back to `fallback`. */
+  public sysStr(key: string, fallback: string): string {
+    const v = this.sysStrings.get(key);
+    return v && v.length > 0 ? v : fallback;
   }
 
   public drawFxTemplateState(

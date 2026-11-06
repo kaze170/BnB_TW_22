@@ -1297,12 +1297,21 @@ function handleClientPacket(sess: ClientSession, opcode: ClientOpcode, r: Binary
     case ClientOpcode.NoteAction: {
       if (!sess.profile) return;
       const { receiver, content } = decodeJsonPayload<{ receiver: string; content: string }>(r);
+      if (typeof receiver !== "string" || receiver.trim().length === 0) {
+        sendToast(sess, "請輸入收件人暱稱");
+        return;
+      }
       const target = db.getProfileByNickname(receiver);
       if (!target) {
         sendToast(sess, `找不到收件人「${receiver}」`);
         return;
       }
-      db.sendNote(sess.profile.nickname, target.nickname, content, 0);
+      const body = typeof content === "string" ? content.slice(0, 500) : "";
+      if (body.trim().length === 0) {
+        sendToast(sess, "請輸入信件內容");
+        return;
+      }
+      db.sendNote(sess.profile.nickname, target.nickname, body, 0);
       sendToast(sess, `信件已寄出給 ${target.nickname}！`);
       const destSess = sessionsByUserId.get(target.userId);
       if (destSess) syncUserEconomyAndInventory(destSess);

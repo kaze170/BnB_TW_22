@@ -18,6 +18,8 @@ import {
   type PlayerInputState,
   type SimBomber,
 } from "../../shared/sim/world.ts";
+import type { ObjectStateAnim, ObjectTemplateEntry } from "../../shared/formats/objectTable.ts";
+import type { SimMonster } from "../../shared/sim/world.ts";
 import type { RGBA } from "../gpu/renderer.ts";
 import type { ClientAppState } from "../state.ts";
 
@@ -95,6 +97,40 @@ function activeItemSpritePath(kind: ActiveItemKind): string | null {
   }
 }
 
+/** State name with its leading "NN " index stripped (e.g. "02 Walk Left" -> "walk left"). */
+function monsterStateLabel(st: ObjectStateAnim): string {
+  return st.stateName.replace(/^\d+\s*/, "").trim().toLowerCase();
+}
+
+/**
+ * Picks the ObjectTable state for a monster.
+ * The walking monsters all lay their states out as "02 Walk Left/Up/Right/Down"
+ * followed by "06 Stop Left/Up/Right/Down", whose order matches Direction
+ * (Left=0, Up=1, Right=2, Down=3). The catchable rabbits have no directional
+ * cycle at all and instead expose "01 Lockin" / "02 Die" / "10 Normal".
+ */
+function resolveMonsterStateIndex(
+  tpl: ObjectTemplateEntry,
+  mon: SimMonster,
+  moving: boolean,
+): number {
+  const labels = tpl.states.map(monsterStateLabel);
+  const exact = (needle: string): number => labels.indexOf(needle);
+
+  const lockIdx = exact("lockin");
+  if (mon.trappedTicks > 0 && lockIdx >= 0) return lockIdx;
+
+  // Rabbits: no walk/stop states, so they get the single "Normal" pose.
+  if (exact("normal") >= 0) {
+    const dieIdx = exact("die");
+    if (!mon.alive && dieIdx >= 0) return dieIdx;
+    return exact("normal");
+  }
+
+  const dir = mon.dir >= 0 && mon.dir <= 3 ? mon.dir : 3;
+  return (moving ? 2 : 6) + dir;
+}
+
 export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
   const r = state.assets.renderer;
   const ui = state.ui;
@@ -161,25 +197,25 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
     }
   }
 
-  // 3. Active Directional Water Flames (Flame/Flame -> Bomb/Fire00)
+  // 3. Active Directional Water Flames (flame/flame -> Bomb/Fire00)
+  //
+  // flame/flame exposes ONE state per reach: "FireC01..10" (centre) then
+  // "FireL01..10" (left arm), "FireU01..10", "FireR01..10", "FireD01..10" -- so the
+  // state index is <direction base> + <tiles from the bomb - 1>. The old code just
+  // guessed "length 1 for mid segments, length 6 for end segments", which made every
+  // arm look the same no matter how strong the bomb was.
   const flameTpl = state.assets.fxByName.get("flame/flame");
+  const FLAME_DIR_STATE_BASE = [15, 30, 45, 60]; // Left, Up, Right, Down (matches part = 1 + d * 2)
   for (const fl of world.flames) {
     const ax = ox + cellToAnchorX(fl.col);
     const ay = oy + cellToAnchorY(fl.row);
     if (flameTpl) {
-      const stateBase =
-        fl.part === 0
-          ? 0
-          : fl.part <= 2
-            ? 15
-            : fl.part <= 4
-              ? 30
-              : fl.part <= 6
-                ? 45
-                : 60;
+      // part 0 = centre (FireC), 1..2 = Left, 3..4 = Up, 5..6 = Right, 7..8 = Down
+      const dirBase = fl.part === 0 ? 0 : FLAME_DIR_STATE_BASE[((fl.part - 1) >> 1) & 3]!;
+      const reach = Math.max(0, Math.min(9, fl.step - 1));
       state.assets.drawFxTemplateState(
         flameTpl,
-        stateBase + (fl.part % 2 === 0 && fl.part > 0 ? 5 : 0),
+        dirBase + reach,
         fl.totalTicks - fl.ticksLeft,
         ax,
         ay,
@@ -299,13 +335,16 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
       const mx = ox + interpX + 20;
       const my = oy + interpY;
 
-      const sheet =
-        state.assets.getSpriteSync("Fx", `Monster/${mon.name}`) ??
-        state.assets.getSpriteSync("Fx", "Game/Mst_N_Down") ??
-        state.assets.getSpriteSync("Fx", "Game/Bat00");
-      if (sheet) {
-        const fi = Math.floor(mon.aiTick / 6) % Math.max(1, sheet.frames.length);
-        state.assets.drawSpriteFrame(sheet, fi, mx - 20, my, [1, 1, 1, 1], mon.isBoss ? 1.35 : 1);
+      // Real ObjectTable monster template (Game/Mummy, Game/BulaBat, Game/SmallMonster,
+      // Game/PenguinMon, Game/Rabbit00/01) driven by its own state table.
+      const mTpl = state.assets.fxByName.get(mon.templateName.toLowerCase());
+      if (mTpl && mTpl.states.length > 0) {
+        const moving = Math.abs(mon.x - mon.prevX) > 0 || Math.abs(mon.y - mon.prevY) > 0;
+        const mState = Math.min(
+          mTpl.states.length - 1,
+          resolveMonsterStateIndex(mTpl, mon, moving),
+        );
+        state.assets.drawFxTemplateState(mTpl, mState, mon.aiTick, mx - 20, my);
       }
       if (mon.trappedTicks > 0) {
         const bubTpl = state.assets.fxByName.get("bomb/bubble");
@@ -459,10 +498,18 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
     const isDead = b.status === BomberStatus.Dead;
     const isTrapped = b.status === BomberStatus.Trapped;
 
-    // Native Game/TeamColor slot plate
-    if (teamColSheet && teamColSheet.frames.length > 0) {
-      const tFrame = Math.min(teamColSheet.frames.length - 1, b.team);
-      state.assets.drawSpriteFrame(teamColSheet, tFrame, 658, sy, [1, 1, 1, isDead ? 0.45 : 0.9]);
+    // Native Game/TeamColor slot plate. Frames 0 and 1 are the only 106x42 pieces --
+    // exactly the size of the 108x40 carved roster slot at (658, sy) with its 43px
+    // pitch -- so frame 1 is used to highlight your own slots and 0 for everyone else.
+    if (teamColSheet && teamColSheet.frames.length > 1) {
+      const slotSelf = b.slotIndex === state.myPrimarySlot || b.slotIndex === state.mySecondarySlot;
+      state.assets.drawSpriteFrame(
+        teamColSheet,
+        slotSelf ? 1 : 0,
+        658,
+        sy,
+        [1, 1, 1, isDead ? 0.45 : 0.9],
+      );
     }
 
     // Portrait centred in the left dark box (661, sy + 6, 42, 31)
@@ -487,14 +534,22 @@ export function renderGameStage(state: ClientAppState, renderAlpha = 1): void {
       state.assets.drawSpriteFrame(lvlSheet, li, 707, sy + 7);
     }
 
-    // Status / KO count inside right dark pill (731, sy + 6, 44, 16)
-    const rightTag = isDead ? "OUT" : isTrapped ? "HELP" : `KO:${b.kills}`;
+    // Status pill (x 724..764, y sy+4..sy+20): authentic csysstr.ssd labels --
+    // StateLose="敗北" and StateLocked="咕嚕嚕" -- with the kill count drawn in the
+    // native Game/ItemCount digit sprites while the player is still alive.
     const rightCol: RGBA = isDead
       ? [0.65, 0.68, 0.72, 1]
       : isTrapped
         ? [1, 0.55, 0.4, 1]
         : [0.85, 0.96, 1, 1];
-    r.drawText(rightTag, 753, sy + 8, rightCol, { align: "center", outlined: false });
+    if (isDead || isTrapped) {
+      const label = state.assets.sysStr(isDead ? "StateLose" : "StateLocked", isDead ? "敗北" : "咕嚕嚕");
+      r.drawText(label, 744, sy + 6, rightCol, { align: "center", outlined: false, maxWidth: 40 });
+    } else {
+      const ks = String(b.kills);
+      // drawSpriteDigits is left-aligned, so shift left by half the run to centre it.
+      ui.drawSpriteDigits(state.assets, "Game/ItemCount", ks, 744 - (ks.length * 10) / 2, sy + 6, 10);
+    }
 
     // Player nickname in bottom strip (707, sy + 24, 70, 14)
     const isSelf = b.slotIndex === state.myPrimarySlot || b.slotIndex === state.mySecondarySlot;

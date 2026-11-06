@@ -147,9 +147,12 @@ export class GameDatabase {
   }
 
   public getProfileByNickname(nickname: string): UserProfileDTO | null {
+    if (typeof nickname !== "string") return null;
+    const name = nickname.trim();
+    if (name.length === 0) return null;
     const row = this.db
       .query("SELECT * FROM users WHERE nickname = ?")
-      .get(nickname.trim()) as Record<string, unknown> | null;
+      .get(name) as Record<string, unknown> | null;
     return row ? this.rowToProfile(row) : null;
   }
 

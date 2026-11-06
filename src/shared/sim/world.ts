@@ -188,9 +188,22 @@ export interface SimFlame {
   col: number;
   /** 0=Center, 1=MidLeft, 2=EndLeft, 3=MidUp, 4=EndUp, 5=MidRight, 6=EndRight, 7=MidDown, 8=EndDown */
   part: number;
+  /**
+   * Tile distance from the bomb (1..10). flame/flame exposes one state per reach
+   * ("FireL01" .. "FireL10"), so the renderer needs this to pick the right one --
+   * the centre cell carries the bomb's full power instead.
+   */
+  step: number;
   ticksLeft: number;
   totalTicks: number;
 }
+
+/**
+ * Flame lifetime in ticks. flame/flame's states are all exactly 19 ticks long
+ * (frames 0..18: the burst, then the 60..96 dissipation tail), and the object is
+ * destroyed when its animation finishes -- so 19 is the authentic duration.
+ */
+export const FLAME_LIFETIME_TICKS = 19;
 
 export interface SimGroundItem {
   uid: number;
@@ -228,6 +241,29 @@ export interface SimDart {
   y: number;
   dir: Direction;
   ticksLeft: number;
+}
+
+/**
+ * Real ObjectTable templates for every monster kind the sim can spawn.
+ *
+ * The map files only ever name "InnerSoul" / "OuterSoul", which are C++ classes
+ * (CGOInnerSoul / CGOOuterSoul), not sprite paths -- CA.exe resolves them in
+ * sub_4FC366 -> "Game/Mummy" (Game/Mst_N_*) and sub_4FCCBD -> "Game/BulaBat"
+ * (Game/Mst_T_*). The hand-written names "Game/MonPenguin", "Game/MonBasic" and
+ * "Game/Rabbit" that used to be here do not exist in ObjectTable at all, so every
+ * monster fell back to a placeholder sprite.
+ */
+export const MONSTER_TEMPLATE_BY_KIND: Readonly<Record<string, string>> = {
+  innersoul: "Game/Mummy",
+  outersoul: "Game/BulaBat",
+  monpenguinboss: "Game/PenguinMon",
+  monnpc: "Game/SmallMonster",
+  goldrabbit: "Game/Rabbit01",
+  whiterabbit: "Game/Rabbit00",
+};
+
+export function resolveMonsterTemplate(kind: string): string {
+  return MONSTER_TEMPLATE_BY_KIND[kind.toLowerCase()] ?? "Game/SmallMonster";
 }
 
 export interface SimMonster {
@@ -614,7 +650,7 @@ export class GameWorld {
           this.monsters.push({
             uid: this.allocUid(),
             name: ms.monsterName,
-            templateName: `Game/${ms.monsterName}`,
+            templateName: resolveMonsterTemplate(ms.monsterName),
             prevX: cellToAnchorX(ms.col),
             prevY: cellToAnchorY(ms.row),
             x: cellToAnchorX(ms.col),
@@ -644,7 +680,7 @@ export class GameWorld {
           this.monsters.push({
             uid: this.allocUid(),
             name: boss ? "MonPenguinBoss" : "MonNpc",
-            templateName: boss ? "Game/MonPenguin" : "Game/MonBasic",
+            templateName: resolveMonsterTemplate(boss ? "MonPenguinBoss" : "MonNpc"),
             prevX: cellToAnchorX(mc),
             prevY: cellToAnchorY(mr),
             x: cellToAnchorX(mc),
@@ -670,7 +706,7 @@ export class GameWorld {
         this.monsters.push({
           uid: this.allocUid(),
           name: i === 0 ? "GoldRabbit" : "WhiteRabbit",
-          templateName: "Game/Rabbit",
+          templateName: resolveMonsterTemplate(i === 0 ? "GoldRabbit" : "WhiteRabbit"),
           prevX: cellToAnchorX(cc),
           prevY: cellToAnchorY(rr),
           x: cellToAnchorX(cc),
@@ -1178,7 +1214,7 @@ export class GameWorld {
     const queue: SimBomb[] = [rootBomb];
     const explodedUids = new Set<number>([rootBomb.uid]);
     const blockHitCells = new Map<number, number>(); // cellIdx -> ownerSlot
-    const flameMap = new Map<number, { part: number; ownerSlot: number }>();
+    const flameMap = new Map<number, { part: number; step: number; ownerSlot: number }>();
 
     while (queue.length > 0) {
       const bomb = queue.shift()!;
@@ -1186,7 +1222,12 @@ export class GameWorld {
       if (idx >= 0) this.bombs.splice(idx, 1);
 
       const centerIdx = this.cellIdx(bomb.row, bomb.col);
-      flameMap.set(centerIdx, { part: 0, ownerSlot: bomb.ownerSlot });
+      const prevCenter = flameMap.get(centerIdx);
+      flameMap.set(centerIdx, {
+        part: 0,
+        step: Math.max(prevCenter?.step ?? 0, bomb.power),
+        ownerSlot: bomb.ownerSlot,
+      });
 
       for (let d = 0; d < 4; d++) {
         const dx = DIR_DX[d]!;
@@ -1215,14 +1256,22 @@ export class GameWorld {
           const isEnd = step === bomb.power;
           const part = 1 + d * 2 + (isEnd ? 1 : 0);
           const prev = flameMap.get(cIdx);
-          if (!prev || prev.part !== 0) {
-            flameMap.set(cIdx, { part: prev ? 0 : part, ownerSlot: bomb.ownerSlot });
+          if (prev) {
+            // Two rays crossing on this cell: the original renders the crossing as a
+            // centre-style burst, keeping the longest reach of the two.
+            flameMap.set(cIdx, {
+              part: 0,
+              step: Math.max(prev.step, step),
+              ownerSlot: prev.ownerSlot,
+            });
+          } else {
+            flameMap.set(cIdx, { part, step, ownerSlot: bomb.ownerSlot });
           }
         }
       }
     }
 
-    // Spawn flames (12 ticks = 360 ms) and burn exposed ground items
+    // Spawn flames (FLAME_LIFETIME_TICKS = the native flame/flame animation length)
     for (const [cIdx, info] of flameMap) {
       const r = Math.floor(cIdx / GRID_COLS);
       const c = cIdx % GRID_COLS;
@@ -1232,8 +1281,9 @@ export class GameWorld {
         row: r,
         col: c,
         part: info.part,
-        ticksLeft: 12,
-        totalTicks: 12,
+        step: info.step,
+        ticksLeft: FLAME_LIFETIME_TICKS,
+        totalTicks: FLAME_LIFETIME_TICKS,
       });
 
       // Burn ground items past spawn grace
