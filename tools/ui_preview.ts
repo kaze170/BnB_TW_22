@@ -122,7 +122,8 @@ game.update(30);
 await save(game, "game_preview.png");
 // second draw lets lazily requested item sprites appear
 await save(game, "game_preview.png");
-net.emit({ t: "gameEnd", result: { winner: "human", draw: false } });
+sim.winner = "human"; sim.draw = false; sim.over = true;
+net.emit({ t: "gameEnd", result: sim.result() });
 game.update(30);
 await save(game, "game_result_preview.png");
 console.log(JSON.stringify({ renderer: renderer.kind, map: init.map, frame: snap.frame, bombs: snap.bombs.length, fire: snap.explosions.length, items: snap.items.length, alive: snap.bombers.filter((b) => b.alive).length }));

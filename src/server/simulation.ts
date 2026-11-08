@@ -9,7 +9,7 @@
  * draws logical image = counter, and is removed at the group's frame count
  * (sub_454188/45436D/454545/45FE8B).
  */
-import type { GameInitState, GameSnapshot, MapCell, BomberState } from "../shared/protocol.ts";
+import type { GameInitState, GameSnapshot, MapCell, BomberState, GameResult, ResultRow } from "../shared/protocol.ts";
 import {
   MAPS, ITEMS, TILE, FUSE_MS, MAP_NAMES,
   tileName, tileType, charStats, rollItem, itemType,
@@ -33,6 +33,8 @@ export interface SimPlayer {
   input: { dx: number; dy: number; bomb: boolean };
   bombLatch: boolean;
   aiTimer: number;
+  /** server-original result stats */
+  kills: number; deaths: number; boxes: number; items: number;
 }
 interface Bomb { id: number; x: number; y: number; owner: string; timer: number; power: number; }
 type FireRole = "center" | "arm" | "tip";
@@ -44,6 +46,7 @@ interface FlameSegment {
   asset: string;
   role: FireRole;
   dir: number;
+  owner: string;
 }
 interface Fire { x: number; y: number; segments: FlameSegment[]; }
 interface Item { id: number; x: number; y: number; item: string; asset: string; }
@@ -92,6 +95,7 @@ export class GameSimulation {
         speed: st.speed, bombCount: st.bombCount, power: st.power,
         speedCap: st.speedCap, bombCap: st.bombCap, powerCap: st.powerCap, baseSpeed: st.speed,
         input: { dx: 0, dy: 0, bomb: false }, bombLatch: false, aiTimer: 0,
+        kills: 0, deaths: 0, boxes: 0, items: 0,
       });
     });
   }
@@ -150,7 +154,21 @@ export class GameSimulation {
   private fireAt(x: number, y: number) {
     return this.fires.some((f) => f.x === x && f.y === y && this.activeSegment(f) !== undefined);
   }
-  private makeSegment(group: number, delayTicks: number, role: FireRole, dir: number): FlameSegment {
+  /** Apply lethal active flame to a bomber and credit the segment owner. */
+  private fireKill(b: SimPlayer): boolean {
+    if (!b.alive) return false;
+    const cell = this.fires.find((f) => f.x === b.tx && f.y === b.ty);
+    const seg = cell ? this.activeSegment(cell) : undefined;
+    if (!seg) return false;
+    b.alive = false;
+    b.deaths++;
+    if (seg.owner !== b.id) {
+      const killer = this.bombers.find((x) => x.id === seg.owner);
+      if (killer) killer.kills++;
+    }
+    return true;
+  }
+  private makeSegment(group: number, delayTicks: number, role: FireRole, dir: number, owner: string): FlameSegment {
     const anim = animationGroup(FLAME_OBJECT, group);
     return {
       group,
@@ -159,6 +177,7 @@ export class GameSimulation {
       asset: anim?.asset ?? "Bomb/Fire00",
       role,
       dir,
+      owner,
     };
   }
   private addFlame(x: number, y: number, seg: FlameSegment) {
@@ -196,9 +215,7 @@ export class GameSimulation {
     }
     for (const bomb of explode) this.explode(bomb);
     // fire damage (active segments only; delayed propagation is not lethal yet)
-    for (const b of this.bombers) {
-      if (b.alive && this.fireAt(b.tx, b.ty)) b.alive = false;
-    }
+    for (const b of this.bombers) this.fireKill(b);
     // win check
     const alive = this.bombers.filter((b) => b.alive);
     if (alive.length <= 1 && this.bombers.length > 1) {
@@ -221,7 +238,7 @@ export class GameSimulation {
         b.x += Math.sign(dx) * Math.min(step, Math.abs(dx));
         b.y += Math.sign(dy) * Math.min(step, Math.abs(dy));
       }
-      if (this.fireAt(b.tx, b.ty)) b.alive = false;
+      this.fireKill(b);
       return;
     }
     let dir = -1;
@@ -267,6 +284,8 @@ export class GameSimulation {
         if (cell.kind === 2) { // box: destroy, drop item, stop
           cell.kind = 0; cell.object = null;
           this.destroyed.push(this.idx(x, y));
+          const owner = this.bombers.find((b) => b.id === bomb.owner);
+          if (owner) owner.boxes++;
           const item = rollItem(this.rand, this.mapDrops);
           if (item) this.items.push({ id: this.nextId++, x, y, item, asset: ITEMS.find((e) => e.name === item)?.name2 ?? "Item/Bomb" });
           break;
@@ -276,7 +295,7 @@ export class GameSimulation {
       }
     }
     for (const c of cells) {
-      this.addFlame(c.x, c.y, this.makeSegment(c.group, c.delay, c.role, c.dir));
+      this.addFlame(c.x, c.y, this.makeSegment(c.group, c.delay, c.role, c.dir, bomb.owner));
       // items burn? original keeps items; we keep them.
     }
     // chain bombs whose timer hit 0 explode next tick (timer<=0 handled above already this tick;
@@ -288,6 +307,7 @@ export class GameSimulation {
     const it = this.items.find((i) => i.x === b.tx && i.y === b.ty);
     if (!it) return;
     this.items = this.items.filter((i) => i.id !== it.id);
+    b.items++;
     const t = itemType(it.item);
     switch (t) {
       case 1: b.bombCount = Math.min(b.bombCap, b.bombCount + 1); break;
@@ -362,6 +382,34 @@ export class GameSimulation {
   private botStep(b: SimPlayer, dir: number) {
     b.input.dx = dir === 2 ? -1 : dir === 3 ? 1 : 0;
     b.input.dy = dir === 0 ? 1 : dir === 1 ? -1 : 0;
+  }
+
+  /** Server-original vertical-slice scoreboard. The client renders it with the
+   * recovered CGOGameResult layout/assets (Game/PatResultDlg, ResultImg,
+   * ResultInfoBar); scoring/award assignment here is original, not exe packet
+   * semantics (online scoring was server-authoritative). */
+  result(): GameResult {
+    const rows: ResultRow[] = this.bombers.map((b) => ({
+      id: b.id, slot: b.slot, character: b.character, bot: b.bot, alive: b.alive,
+      kills: b.kills, deaths: b.deaths, boxes: b.boxes, items: b.items,
+      score: Math.min(999, b.kills * 100 + b.boxes * 10 + b.items * 5 + (b.alive ? 50 : 0)),
+      rank: 0,
+    }));
+    rows.sort((a, b) => {
+      if (a.id === this.winner) return -1;
+      if (b.id === this.winner) return 1;
+      return b.score - a.score || b.kills - a.kills || a.slot - b.slot;
+    });
+    const maxKills = Math.max(0, ...rows.map((r) => r.kills));
+    const maxBoxes = Math.max(0, ...rows.map((r) => r.boxes));
+    rows.forEach((r, i) => {
+      r.rank = i + 1;
+      if (!this.draw && r.rank === 1) r.award = 57;
+      else if (maxKills > 0 && r.kills === maxKills) r.award = 64;
+      else if (maxBoxes > 0 && r.boxes === maxBoxes) r.award = 66;
+      else if (r.alive) r.award = 68;
+    });
+    return { winner: this.winner, draw: this.draw, durationMs: this.frame * ORIGINAL_TICK_MS, rows };
   }
 
   snapshot(): GameSnapshot {

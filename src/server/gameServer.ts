@@ -358,7 +358,7 @@ export class GameServer {
         for (const p of room.players) {
           const pc = this.clientById(p.id);
           if (pc) {
-            this.send(pc.ws, { t: "gameEnd", result: { winner: sim.winner, draw: sim.draw } });
+            this.send(pc.ws, { t: "gameEnd", result: sim.result() });
             this.send(pc.ws, { t: "roomState", room });
           }
         }

@@ -168,7 +168,25 @@ export interface GameSnapshot {
   /** cell indices whose box was destroyed this frame (object removed) */
   destroyed: number[];
 }
+export interface ResultRow {
+  id: string;
+  slot: number;
+  character: number;
+  bot: boolean;
+  alive: boolean;
+  /** server-original vertical-slice stats */
+  kills: number;
+  deaths: number;
+  boxes: number;
+  items: number;
+  score: number;
+  rank: number;
+  /** Game/ResultImg logical badge index (server-original award assignment) */
+  award?: number;
+}
 export interface GameResult {
   winner: string | null;
   draw: boolean;
+  durationMs?: number;
+  rows?: ResultRow[];
 }

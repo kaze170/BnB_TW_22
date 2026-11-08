@@ -14,7 +14,12 @@ import { ORIGINAL_TICK_MS } from "../../shared/timing.ts";
 import {
   BOMB_OBJECT, CHARACTER_WALK_GROUP, animationGroup, animationImageAtTicks,
 } from "../../shared/animations.ts";
-import type { GameInitState, GameSnapshot, GameResult } from "../../shared/protocol.ts";
+import type { GameInitState, GameSnapshot, GameResult, ResultRow } from "../../shared/protocol.ts";
+import {
+  RESULT_DIALOG_WIDTH, RESULT_ROW_Y0, RESULT_ROW_PITCH, RESULT_RANK_X,
+  RESULT_PORTRAIT_X, RESULT_NAME_X, RESULT_BAR_X, RESULT_COL2_X, RESULT_AWARD_X,
+  resultBarSegments, resultDialogHeight,
+} from "../../shared/resultLayout.ts";
 
 const TILE = 40;
 const DIR_NAME = ["WalkDown", "WalkUp", "WalkLeft", "WalkRight"];
@@ -46,6 +51,9 @@ export class GameStage extends Stage {
   private timerSpr: Sprite | null = null;
   private itemBox: Sprite | null = null;
   private resultSprites = new Map<string, Sprite>();
+  private resultDlg: Sprite | null = null;
+  private resultImg: Sprite | null = null;
+  private resultInfoBar: Sprite | null = null;
   private exitBtn: Button | null = null;
   private okBtn: Button | null = null;
   private destroyedSet = new Set<number>();
@@ -83,6 +91,9 @@ export class GameStage extends Stage {
       const s = await a.sprite(`Game/${key}`);
       if (s) this.resultSprites.set(key, s);
     }
+    this.resultDlg = (await a.sprite("Game/PatResultDlg")) ?? null;
+    this.resultImg = (await a.sprite("Game/ResultImg")) ?? null;
+    this.resultInfoBar = (await a.sprite("Game/ResultInfoBar")) ?? null;
     for (const key of ["Item/Bomb", "Item/MaxPower", "Item/Skate"]) {
       const s = await a.sprite(key);
       if (s) this.itemIcons.push(s);
@@ -336,16 +347,97 @@ export class GameStage extends Stage {
     if (this.status) drawText(r, this.status, 25, 562, { color: "#ffb0b0" });
   }
 
+  /** Original CGOGameResult report: PatResultDlg 9-slice, ResultInfoBar header,
+   * 8 rows at y=51+25i, ResultImg rank/digits/bar/awards (sub_4548CD/454DAC/
+   * 454A43/454B49/454E96). Stats/awards are supplied by the original server. */
   private drawResult(r: import("../engine/renderer.ts").Renderer) {
     const res = this.result!;
     const me = this.ctx.net.user?.id;
     const key = res.draw ? "Draw" : res.winner === me ? "Win" : "Lose";
-    const spr = this.resultSprites.get(key);
-    if (spr) drawLogical(r, spr, 0, 286, 220);
+    const banner = this.resultSprites.get(key);
+    if (banner) drawLogical(r, banner, 0, 366, 18);
+
+    const rows: ResultRow[] = res.rows?.length
+      ? res.rows.slice(0, 8)
+      : (this.init?.players ?? []).slice(0, 8).map((p, i) => ({
+        id: p.id, slot: p.slot, character: p.character, bot: p.bot, alive: true,
+        kills: 0, deaths: 0, boxes: 0, items: 0, score: 0, rank: i + 1,
+      }));
+    const w = RESULT_DIALOG_WIDTH;
+    const h = resultDialogHeight(rows.length);
+    const x = Math.floor((800 - w) / 2);
+    const y = 92;
+    if (this.resultDlg) this.draw9Slice(r, this.resultDlg, x, y, w, h);
+    if (this.resultInfoBar) drawLogical(r, this.resultInfoBar, 0, x + RESULT_PORTRAIT_X, y + 20);
+
+    const img = this.resultImg;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]!;
+      const ry = y + RESULT_ROW_Y0 + i * RESULT_ROW_PITCH;
+      const self = row.id === me;
+      if (img) {
+        const rank = Math.max(0, Math.min(7, row.rank - 1));
+        this.drawResultImage(r, img, 37 + rank, x + RESULT_RANK_X, ry);
+      }
+      const portrait = this.portraits.get(row.character);
+      if (portrait) {
+        const pi = logicalImage(portrait, 0);
+        if (pi) r.draw(portrait, rect(x + RESULT_PORTRAIT_X, ry, 18, 18), { src: pi.src });
+      }
+      const name = self ? "你" : row.bot ? `電腦${row.slot + 1}` : row.id;
+      drawText(r, name.slice(0, 8), x + RESULT_NAME_X, ry + 2, { color: self ? "#ffe08a" : row.alive ? "#ffffff" : "#8899aa" });
+      if (img) {
+        this.drawResultDigits(r, img, row.kills, x + 244, ry + 2, 2);
+        this.drawResultDigits(r, img, 0, x + 300, ry + 2, 2); // 救援數 (no rescue mechanic in slice)
+        this.drawResultBar(r, img, row.score, x + RESULT_BAR_X, ry - 1);
+        this.drawResultDigits(r, img, row.items * 10, x + RESULT_COL2_X + 24, ry + 2, 3);
+        if (row.award != null) this.drawResultImage(r, img, row.award, x + RESULT_AWARD_X, ry);
+      }
+    }
     const label = res.draw ? "平手" : res.winner === me ? "勝利" : "失敗";
-    drawTextCentered(r, label, 320, 300, { color: "#ffffff", bold: true });
-    if (res.winner) drawTextCentered(r, `贏家：${res.winner}`, 320, 324, { color: "#ffe08a" });
-    drawTextCentered(r, "Enter 返回房間", 320, 352, { color: "#9fd8ff" });
-    this.okBtn?.draw(r);
+    const secs = Math.floor((res.durationMs ?? 0) / 1000);
+    drawTextCentered(r, `${label} · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`, 400, y + h + 2, { color: "#ffffff" });
+    if (this.okBtn) {
+      this.okBtn.x = Math.floor((800 - this.okBtn.w) / 2);
+      this.okBtn.y = y + h + 22;
+      this.okBtn.draw(r);
+    }
+    drawTextCentered(r, "Enter 返回房間", 400, y + h + 62, { color: "#9fd8ff" });
+  }
+
+  private draw9Slice(r: import("../engine/renderer.ts").Renderer, spr: Sprite, x: number, y: number, w: number, h: number) {
+    const s = 10;
+    const iw = Math.max(0, w - s * 2), ih = Math.max(0, h - s * 2);
+    const piece = (i: number, dx: number, dy: number, dw: number, dh: number) => {
+      const img = logicalImage(spr, i);
+      if (img && dw > 0 && dh > 0) r.draw(spr, rect(dx, dy, dw, dh), { src: img.src });
+    };
+    piece(0, x, y, s, s); piece(1, x + s, y, iw, s); piece(2, x + w - s, y, s, s);
+    piece(3, x, y + s, s, ih); piece(4, x + s, y + s, iw, ih); piece(5, x + w - s, y + s, s, ih);
+    piece(6, x, y + h - s, s, s); piece(7, x + s, y + h - s, iw, s); piece(8, x + w - s, y + h - s, s, s);
+  }
+
+  private drawResultImage(r: import("../engine/renderer.ts").Renderer, spr: Sprite, index: number, x: number, y: number) {
+    const img = logicalImage(spr, index);
+    if (!img) return;
+    r.draw(spr, rect(x + img.dx, y + img.dy, img.src.w, img.src.h), { src: img.src });
+  }
+
+  private drawResultDigits(r: import("../engine/renderer.ts").Renderer, spr: Sprite, value: number, rightX: number, y: number, digits: number) {
+    const text = String(Math.max(0, Math.floor(value))).padStart(digits, "0").slice(-digits);
+    let cx = rightX - text.length * 8;
+    for (const ch of text) {
+      this.drawResultImage(r, spr, ch.charCodeAt(0) - 48, cx, y);
+      cx += 8;
+    }
+  }
+
+  private drawResultBar(r: import("../engine/renderer.ts").Renderer, spr: Sprite, value: number, x: number, y: number) {
+    this.drawResultImage(r, spr, 45, x, y);
+    for (const seg of resultBarSegments(value)) {
+      const img = logicalImage(spr, seg.image);
+      if (!img) continue;
+      r.draw(spr, rect(x + seg.x + img.dx, y + img.dy, seg.w, img.src.h), { src: img.src });
+    }
   }
 }

@@ -163,7 +163,7 @@ RLE（每像素）：命令位元組 `cmd`，`run = cmd & 0x3F`：
 
 ### 7.4 仍待（faithful 還原）
 - 精確 online fuse；特殊炸彈/角色動畫狀態（remote/blind/sprinkler、throw/dash/ghost/ride 等）；道具完整效果（Punch/Hollow/Roller 等）。Normal flame lifetime/animation table 與逐格傳播 delay 已實作（§8.5）。
-- UI 細節：channel tab 類別、房間 slot open/close、map preview thumbnails、原版結算完整報表、IME/聊天過濾。
+- UI 細節：channel tab 類別、房間 slot open/close、map preview thumbnails、IME/聊天過濾。結算報表 UI 已實作（§8.6）；online 計分/獎項 packet 語意仍待（server 原創 stats）。
 - WebGPU 實機硬體呈現驗證。已用 transient headless Chromium（playwright-core + @sparticuz/chromium）跑完 login→channel→lobby→create→prepare→start→game→exit，Canvas2D fallback 零 page error；並修复 rAF 之間快速 click 遺失（`Input.clicked` 改由 release flag 決定）與 WebGPU texture upload（改用 256-byte row-aligned `writeTexture`，避免 SwiftShader external ImageBitmap/JPEG reference 失效）。Headless SwiftShader 可取得 adapter 但截圖不可靠，不作為視覺验收。
 
 ## 8. 已驗證：logical I16 images、30ms timing、原版 UI 座標（2026-11-08）
@@ -195,7 +195,7 @@ source rect = (sx, sy, ex-sx, ey-sy) inside frames[frameIndex]
 - SelectServer/channel（`sub_56DBA5/56D34E`）：tab (401,63)；arrows (490,508)/(676,508)；page buttons x=521+30i,y=511；10 channels/page x=428/595,y=218+56·floor(i/2)。Server 提供 5 pages×10 channels。
 - Lobby（`sub_4C99DC/4C6D83/4C70F0`）：room slots x=214/490,y=121/205/289；room-info (+242,+49)；create/quick NM/MM (214/306/404/496,59)；ShowAll (595,66)、Practice (685,66)；room-page arrows (431/494,376)。Create dialog 使用 `Dlg_LB-NMCreate` + `Etc/BtOk/BtCancel`。
 - Prepare（`sub_4D7376/4DB16C`）：8 slots x=27/133/239/345,y=94/239；Ready/Start (512,494)；AutoReady (719,525)；Selectmap (646,428)；Roominfo (344,61)。Character buttons 用 `Etc/SelCharaXX`（缺的以 `PRE_SelChara` 補）；map dialog 用 `Dlg_PRE-SelMap`。
-- Game（`sub_4F5FDC/4E47B4`）：map origin 公式见 §7.3；Exit (647,561)；Timer digits 在右側 sidebar；ItemBox01 (647,466)。結果用 `Game/Win/Lose/Draw` + `Etc/BtOk`，Enter/OK 送 `returnToRoom` 回準備階段。
+- Game（`sub_4F5FDC/4E47B4`）：map origin 公式见 §7.3；Exit (647,561)；Timer digits 在右側 sidebar；ItemBox01 (647,466)。結果以 `CGOGameResult` 原版報表呈現（§8.6）：`Game/Win/Lose/Draw` banner + `PatResultDlg` 9-slice + `ResultInfoBar` + `ResultImg` rank/digits/bar/awards；Enter/OK 送 `returnToRoom` 回準備階段。
 
 ### 8.4 Server lifecycle（原創，語意對照 client）
 已補：server/channel 隔離、`selectChannel`、mapList、duplicate nickname 拒絕、host/ready/start 驗證、create/join/leave、host transfer、in-game leave eliminate、character/map selection、post-game `returnToRoom`、bot fill 到 map spawn count（4–8）。gameEnd 後 room 進入封閉的 `results` 狀態；每位玩家保留自己的結算畫面，按 Enter/OK 後個別回準備階段（尚未全員返回前禁用開始/選圖/加入），全員返回或離開後才重設 ready 並開放房間。`tests/serverLifecycle.test.ts` 用 fake timer/socket 直接驗證此 round-trip。
@@ -209,3 +209,12 @@ source rect = (sx, sy, ex-sx, ey-sy) inside frames[frameIndex]
   - groups 15–29 L、30–44 U、45–59 R、60–74 D：每 group **19 frames = 570ms**；power 1 tip 用各方向 `01`，高 power 在近中心格插入 body cells。
 - **Other recovered loops**：`Bomb/Bomb` 5 groups（Default/Remote/Blind/Sprinkler×2），default `Bomb/Bomb00` pairs `(0,6),(1,6),(2,6),(3,6)` → 24 ticks = **720ms loop**。`Bomb/Bubble` Lock/ExpLive/ExpKill on `Bomb/Bubble00`。`Character/C00_A` 80 groups：Walk L/U/R/D groups 20–23 = 6 pairs × 3 ticks = **540ms**（sequence 0,1,2,0,3,4）；Stop 12–15 single frame @100；Throw 16–19 = (2,1,1,2) ticks = 180ms；Dash 76–79 9 frames。
 - **實作/驗證**：server `GameSimulation` 每格保存最多 15 個 flame segments，snapshot 送 active segment 的 `asset/group/frame/ttl`；client `GameStage` 直接畫 Fire00 logical frame，炸彈/角色走路改用 duration tables。所有 manifest 可解析 group 的 logical image index 均落在 asset image count 內（0 out-of-range；character `_A` 對應 `_ALayerStatic`）。`tests/animations.test.ts` 驗證 group counts、center/arm selection、generic playback、power-1 center 9 ticks vs arms 19 ticks、power-2 第二環 delay 1 tick。`bun test` 13 pass / 492 expect；`bun run preview` UI_PREVIEW_OK；live `bun run smoke` ROOMS_OK + SMOKE_OK；headless Chromium BROWSER_SMOKE_OK（Canvas2D fallback, errors []）。
+
+### 8.6 CGOGameResult 結算報表（已解出並實作）
+- **vtable `0x7A9CFC`**（objdump .rdata 確認）：+124 `sub_454890` init、+128 `sub_4548CD` 背景、+136 `sub_454DAC` row loop、+140 `sub_4549C1` row bg、+148 `sub_454A43` portrait/name、+152 `sub_455C8E` 數字、+156 `sub_454E96` bar/awards。
+- **背景**：`sub_4548CD` 用 `Game/PatResultDlg` 9 個 10×10 logical images 做 9-slice；常數 `0x208=520`、`0x212=530` → dialog 寬 **540**，alpha `0x80`。
+- **Rows**：`sub_454DAC` 迭代 8 行，`y = 51 + 25*i`（`n51 < 251`）。`sub_454A43`：portrait x=`0x66=102`、name x=`0x79=121`（row stride `0x6c=108` bytes）。`sub_454E96`：score bar x=**329**、第二欄 x=**399**、award x=**458**。
+- **Score bar**：`sub_454B49` width = `60*value/999`（cap 60）；先畫 `ResultImg` image45 底，再用 images46/47/48/49 依阈值 `<31`、`31–45`、`46–55`、`>=56` 组合，segment 寬 30/15/10/rest。`src/shared/resultLayout.ts` 實作並由 `tests/result.test.ts` 驗證。
+- **Assets**：`Game/ResultImg` 80 logical images（0–9 digits、37–44 rank badges、45 bar bg、46–49 fill、50–71 badges/awards）；`Game/ResultInfoBar` 4 個 356×18 header（ID/擊破數/救援數/經驗值/LUCCI 等變體）；`Game/ResultImg2` 4 個特殊 award。
+- **Server stats（原創）**：online 計分原本是 server-authoritative，exe client 只消費 packet fields（`sub_455957` row parser：character、two 0–999 bar values、award flags 等）。Vertical slice 由 `GameSimulation.result()` 產生 `GameResult.rows`：kills/deaths/boxes/items/score/rank/award；fire segment 帶 owner 以 credit 擊破，紙箱破壞 credit owner。Award 指派（57/64/66/68）為 server 原創，非 exe packet 語意。
+- **驗證**：`bun test` 18 pass / 515 expect（含 result bar geometry + kill/box credit）；`bun run preview` 輸出 `build/game_result_preview.png`（真實 GameStage + 原版結算 assets）；live `bun run smoke` SMOKE_OK 且 `gameEnd.result.rows` 包含統計。
