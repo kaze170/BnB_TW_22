@@ -11,6 +11,9 @@ import { rect } from "../engine/types.ts";
 import { Button } from "../ui/controls.ts";
 import { drawDigits, drawLogical, drawText, drawTextCentered } from "../ui/draw.ts";
 import { ORIGINAL_TICK_MS } from "../../shared/timing.ts";
+import {
+  BOMB_OBJECT, CHARACTER_WALK_GROUP, animationGroup, animationImageAtTicks,
+} from "../../shared/animations.ts";
 import type { GameInitState, GameSnapshot, GameResult } from "../../shared/protocol.ts";
 
 const TILE = 40;
@@ -27,17 +30,6 @@ function tileAsset(name: string): string {
   return `${folder}/${name.slice(slash + 1)}`;
 }
 
-/** Provisional logical-image groups for Bomb/Fire00 (100 packed images).
- * The exact CGOFlame animation table is still being recovered; age is normalised
- * over the interim cell TTL so the original artwork animates instead of showing
- * a raw atlas page. */
-function fireImageIndex(role: "center" | "arm" | "tip" | undefined, age: number, ttl: number): number {
-  const base = role === "arm" ? 25 : role === "tip" ? 50 : 0;
-  const life = Math.max(1, age + ttl);
-  const t = Math.max(0, Math.min(0.999, age / life));
-  return base + Math.floor(t * 25);
-}
-
 export class GameStage extends Stage {
   private init: GameInitState | null = null;
   private snap: GameSnapshot | null = null;
@@ -46,7 +38,8 @@ export class GameStage extends Stage {
   private chars = new Map<number, Map<number, Sprite>>();
   private portraits = new Map<number, Sprite>();
   private bomb: Sprite | null = null;
-  private fire: Sprite | null = null;
+  private fireSprites = new Map<string, Sprite>();
+  private fireRequests = new Set<string>();
   private itemSprites = new Map<string, Sprite>();
   private itemRequests = new Set<string>();
   private itemIcons: Sprite[] = [];
@@ -65,6 +58,7 @@ export class GameStage extends Stage {
   private offsetX = 20;
   private offsetY = 41;
   private moving = new Set<string>();
+  private walkTicks = new Map<string, number>();
   private status = "";
 
   override async enter(params?: Record<string, unknown>): Promise<void> {
@@ -77,9 +71,12 @@ export class GameStage extends Stage {
       await this.loadMapAssets(this.init);
     }
     this.bomb = (await a.sprite("Bomb/Bomb00")) ?? null;
-    // Default Flame/Flame is absent from the extracted archives; Fire00 is the
-    // available original water-balloon explosion artwork.
-    this.fire = (await a.sprite("Bomb/Fire00")) ?? null;
+    // Flame/Flame ObjectTable groups reference Bomb/Fire00 (normal water-balloon
+    // fire) and Bomb/TimebombFrame (special center). Both are original I16 assets.
+    for (const asset of ["Bomb/Fire00", "Bomb/TimebombFrame"]) {
+      const s = await a.sprite(asset);
+      if (s) this.fireSprites.set(asset, s);
+    }
     this.timerSpr = (await a.sprite("Game/Timer")) ?? null;
     this.itemBox = (await a.sprite("Game/ItemBox01")) ?? null;
     for (const key of ["Win", "Lose", "Draw"]) {
@@ -101,9 +98,19 @@ export class GameStage extends Stage {
       this.snap = m.state;
       for (const i of m.state.destroyed) this.destroyedSet.add(i);
       this.moving.clear();
+      const delta = prev?.timeMs != null && m.state.timeMs != null
+        ? Math.max(ORIGINAL_TICK_MS, m.state.timeMs - prev.timeMs)
+        : ORIGINAL_TICK_MS;
       for (const b of m.state.bombers) {
         const old = prev?.bombers.find((x) => x.id === b.id);
-        if (old && (old.x !== b.x || old.y !== b.y)) this.moving.add(b.id);
+        const moving = b.moving ?? Boolean(old && (old.x !== b.x || old.y !== b.y));
+        if (moving) {
+          this.moving.add(b.id);
+          const dirChanged = Boolean(old && old.dir !== b.dir);
+          this.walkTicks.set(b.id, dirChanged ? delta : (this.walkTicks.get(b.id) ?? 0) + delta);
+        } else {
+          this.walkTicks.set(b.id, 0);
+        }
       }
     }));
     this.offs.push(this.ctx.net.on("gameEnd", (m) => { if (m.t === "gameEnd") this.result = m.result; }));
@@ -217,24 +224,35 @@ export class GameStage extends Stage {
           }
         }
       }
+      const bombAnim = animationGroup(BOMB_OBJECT, 0);
       for (const b of snap.bombs) {
         if (!this.bomb) continue;
-        const elapsed = Math.max(0, init.fuseMs - b.timer);
-        const idx = Math.floor(elapsed / 150) % imageCount(this.bomb);
-        const img = logicalImage(this.bomb, idx);
+        const elapsedTicks = Math.max(0, Math.floor((init.fuseMs - b.timer) / ORIGINAL_TICK_MS));
+        const idx = animationImageAtTicks(bombAnim, elapsedTicks);
+        const img = logicalImage(this.bomb, Math.min(idx, imageCount(this.bomb) - 1));
         if (!img) continue;
         const x = ox + b.x * TILE + TILE / 2 - img.src.w / 2 + img.dx;
         const y = oy + b.y * TILE + TILE - img.src.h + (img.dy - 40);
         r.draw(this.bomb, rect(x, y, img.src.w, img.src.h), { src: img.src });
       }
       for (const f of snap.explosions) {
-        if (!this.fire) continue;
-        const idx = fireImageIndex(f.role, f.age ?? 0, f.ttl);
-        const img = logicalImage(this.fire, Math.min(idx, imageCount(this.fire) - 1));
+        const asset = f.asset ?? "Bomb/Fire00";
+        let spr = this.fireSprites.get(asset);
+        if (!spr) {
+          if (!this.fireRequests.has(asset)) {
+            this.fireRequests.add(asset);
+            void this.ctx.assets.sprite(asset).then((sp) => { if (sp) this.fireSprites.set(asset, sp); });
+          }
+          continue;
+        }
+        // CGOFlame draws logical image = segment tick counter; the ObjectTable
+        // group already encodes direction, so no runtime flipping is needed.
+        const idx = Math.min(f.frame ?? 0, imageCount(spr) - 1);
+        const img = logicalImage(spr, idx);
         if (!img) continue;
         const x = ox + f.x * TILE + img.dx;
         const y = oy + f.y * TILE + TILE - img.src.h + (img.dy - 39);
-        r.draw(this.fire, rect(x, y, img.src.w, img.src.h), { src: img.src, flipX: f.dir === 2, flipY: f.dir === 1 });
+        r.draw(spr, rect(x, y, img.src.w, img.src.h), { src: img.src });
       }
       const sorted = [...snap.bombers].sort((a, b) => a.y - b.y);
       for (const b of sorted) {
@@ -244,8 +262,12 @@ export class GameStage extends Stage {
         const px = ox + b.x, py = oy + b.y;
         if (anim) {
           const count = imageCount(anim);
-          const frame = this.moving.has(b.id) ? Math.floor(timeMs / 120) % count : 0;
-          const img = logicalImage(anim, frame);
+          const chName = `Character/C${String(meta?.character ?? 0).padStart(2, "0")}_A`;
+          const walkGroup = animationGroup(chName, CHARACTER_WALK_GROUP[b.dir] ?? 23);
+          const frame = this.moving.has(b.id)
+            ? animationImageAtTicks(walkGroup, this.walkTicks.get(b.id) ?? 0)
+            : 0;
+          const img = logicalImage(anim, Math.min(frame, count - 1));
           if (img) {
             const baseDy = anim.images?.[0]?.dy ?? img.dy;
             const x = px + TILE / 2 - img.src.w / 2 + img.dx;

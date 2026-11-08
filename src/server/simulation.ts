@@ -1,17 +1,23 @@
 /**
  * Game simulation for the vertical slice. The SERVER is original (project
  * decision), but it consumes the decrypted ORIGINAL data: 15x13 maps, tile
- * types, character stats, item drop weights. Core constants recovered from
- * CA.exe: TILE=40, fixed update step=30ms (CGameStage::sub_4F5658), practice
- * fuse=2000ms (sub_4E87D8). Movement is grid-locked like CGOBomber; fire-cell
- * TTL currently uses the 300ms effect-scheduling base as an interim value.
+ * types, character stats, item drop weights, and ObjectTable animation groups.
+ * Core constants recovered from CA.exe: TILE=40, fixed update step=30ms
+ * (CGameStage::sub_4F5658), practice fuse=2000ms (sub_4E87D8). Movement is
+ * grid-locked like CGOBomber. Flame cells follow CGOFlame: each explosion adds
+ * a segment whose tick counter starts at -distanceDelay, becomes active at 0,
+ * draws logical image = counter, and is removed at the group's frame count
+ * (sub_454188/45436D/454545/45FE8B).
  */
 import type { GameInitState, GameSnapshot, MapCell, BomberState } from "../shared/protocol.ts";
 import {
-  MAPS, ITEMS, TILE, EXPLOSION_MS, FUSE_MS, MAP_NAMES,
+  MAPS, ITEMS, TILE, FUSE_MS, MAP_NAMES,
   tileName, tileType, charStats, rollItem, itemType,
 } from "./gameData.ts";
 import { ORIGINAL_TICK_MS } from "../shared/timing.ts";
+import {
+  FLAME_OBJECT, animationGroup, flameCenterGroup, flameArmGroup,
+} from "../shared/animations.ts";
 
 export interface SimPlayer {
   id: string; slot: number; character: number; bot: boolean;
@@ -29,7 +35,17 @@ export interface SimPlayer {
   aiTimer: number;
 }
 interface Bomb { id: number; x: number; y: number; owner: string; timer: number; power: number; }
-interface Fire { x: number; y: number; ttl: number; age: number; role: "center" | "arm" | "tip"; dir: number; }
+type FireRole = "center" | "arm" | "tip";
+interface FlameSegment {
+  group: number;
+  /** tick counter; negative = propagation delay, >=0 active, >=frameCount removed */
+  counter: number;
+  frameCount: number;
+  asset: string;
+  role: FireRole;
+  dir: number;
+}
+interface Fire { x: number; y: number; segments: FlameSegment[]; }
 interface Item { id: number; x: number; y: number; item: string; asset: string; }
 
 const DIRS = [[0, 1], [0, -1], [-1, 0], [1, 0]]; // down, up, left, right
@@ -88,7 +104,7 @@ export class GameSimulation {
         id: b.id, slot: b.slot, character: b.character, x: b.x, y: b.y,
         speed: b.speed, bombCount: b.bombCount, power: b.power, bot: b.bot,
       })),
-      fuseMs: FUSE_MS, explosionMs: EXPLOSION_MS,
+      fuseMs: FUSE_MS,
     };
   }
 
@@ -123,7 +139,43 @@ export class GameSimulation {
     return true;
   }
   private bombAt(x: number, y: number) { return this.bombs.find((b) => b.x === x && b.y === y); }
-  private fireAt(x: number, y: number) { return this.fires.some((f) => f.x === x && f.y === y); }
+  /** CGOFlame sub_454266 scans newest→oldest for the first non-negative counter. */
+  private activeSegment(cell: Fire): FlameSegment | undefined {
+    for (let i = cell.segments.length - 1; i >= 0; i--) {
+      const seg = cell.segments[i]!;
+      if (seg.counter >= 0) return seg;
+    }
+    return undefined;
+  }
+  private fireAt(x: number, y: number) {
+    return this.fires.some((f) => f.x === x && f.y === y && this.activeSegment(f) !== undefined);
+  }
+  private makeSegment(group: number, delayTicks: number, role: FireRole, dir: number): FlameSegment {
+    const anim = animationGroup(FLAME_OBJECT, group);
+    return {
+      group,
+      counter: delayTicks > 0 ? -delayTicks : 0,
+      frameCount: anim?.frames.length ?? 1,
+      asset: anim?.asset ?? "Bomb/Fire00",
+      role,
+      dir,
+    };
+  }
+  private addFlame(x: number, y: number, seg: FlameSegment) {
+    let cell = this.fires.find((f) => f.x === x && f.y === y);
+    if (!cell) { cell = { x, y, segments: [] }; this.fires.push(cell); }
+    cell.segments.push(seg);
+    // sub_454188 keeps at most 15 segments per cell, dropping the oldest.
+    if (cell.segments.length > 15) cell.segments.shift();
+  }
+  private stepFires(dtMs: number) {
+    const ticks = Math.max(1, Math.round(dtMs / ORIGINAL_TICK_MS));
+    for (const cell of this.fires) {
+      for (const seg of cell.segments) seg.counter += ticks;
+      cell.segments = cell.segments.filter((seg) => seg.counter < seg.frameCount);
+    }
+    this.fires = this.fires.filter((cell) => cell.segments.length > 0);
+  }
 
   tick(dtMs: number) {
     if (this.over) return;
@@ -133,6 +185,9 @@ export class GameSimulation {
     for (const b of this.bombers) if (b.alive) this.move(b, dtMs);
     for (const b of this.bombers) if (b.alive) this.pickup(b);
     for (const b of this.bombers) if (b.alive) this.tryBomb(b);
+    // Advance existing flame counters before this tick's detonations so newly
+    // scheduled segments start at counter 0 (frame 0) and live their full count.
+    this.stepFires(dtMs);
     // bomb timers
     const explode: Bomb[] = [];
     for (const bomb of this.bombs) {
@@ -140,12 +195,10 @@ export class GameSimulation {
       if (bomb.timer <= 0) explode.push(bomb);
     }
     for (const bomb of explode) this.explode(bomb);
-    // fire damage + ttl
+    // fire damage (active segments only; delayed propagation is not lethal yet)
     for (const b of this.bombers) {
       if (b.alive && this.fireAt(b.tx, b.ty)) b.alive = false;
     }
-    for (const f of this.fires) { f.ttl -= dtMs; f.age += dtMs; }
-    this.fires = this.fires.filter((f) => f.ttl > 0);
     // win check
     const alive = this.bombers.filter((b) => b.alive);
     if (alive.length <= 1 && this.bombers.length > 1) {
@@ -195,8 +248,8 @@ export class GameSimulation {
 
   private explode(bomb: Bomb) {
     this.bombs = this.bombs.filter((b) => b.id !== bomb.id);
-    const cells: Array<{ x: number; y: number; role: Fire["role"]; dir: number }> = [
-      { x: bomb.x, y: bomb.y, role: "center", dir: 0 },
+    const cells: Array<{ x: number; y: number; role: FireRole; dir: number; group: number; delay: number }> = [
+      { x: bomb.x, y: bomb.y, role: "center", dir: 0, group: flameCenterGroup(bomb.power), delay: 0 },
     ];
     for (let dir = 0; dir < DIRS.length; dir++) {
       const [dx, dy] = DIRS[dir]!;
@@ -206,7 +259,11 @@ export class GameSimulation {
         const cell = this.cells[this.idx(x, y)]!;
         if (cell.kind === 1) break; // static wall stops fire
         const isTip = i === bomb.power;
-        cells.push({ x, y, role: cell.kind === 2 || isTip ? "tip" : "arm", dir });
+        cells.push({
+          x, y, role: cell.kind === 2 || isTip ? "tip" : "arm", dir,
+          group: flameArmGroup(bomb.power, dir, i),
+          delay: i - 1, // sub_4E3CBE: counter starts 0,-1,-2,... per cell
+        });
         if (cell.kind === 2) { // box: destroy, drop item, stop
           cell.kind = 0; cell.object = null;
           this.destroyed.push(this.idx(x, y));
@@ -219,9 +276,7 @@ export class GameSimulation {
       }
     }
     for (const c of cells) {
-      const existing = this.fires.find((f) => f.x === c.x && f.y === c.y);
-      if (existing) { existing.ttl = EXPLOSION_MS; existing.age = 0; existing.role = c.role; existing.dir = c.dir; }
-      else this.fires.push({ x: c.x, y: c.y, ttl: EXPLOSION_MS, age: 0, role: c.role, dir: c.dir });
+      this.addFlame(c.x, c.y, this.makeSegment(c.group, c.delay, c.role, c.dir));
       // items burn? original keeps items; we keep them.
     }
     // chain bombs whose timer hit 0 explode next tick (timer<=0 handled above already this tick;
@@ -312,14 +367,27 @@ export class GameSimulation {
   snapshot(): GameSnapshot {
     const bombers: BomberState[] = this.bombers.map((b) => ({
       id: b.id, x: b.x, y: b.y, dir: b.dir, alive: b.alive,
-      speed: b.speed, bombCount: b.bombCount, power: b.power, bot: b.bot,
+      speed: b.speed, bombCount: b.bombCount, power: b.power, bot: b.bot, moving: b.moving,
     }));
+    const explosions = this.fires.flatMap((cell) => {
+      const seg = this.activeSegment(cell);
+      if (!seg) return []; // propagation delay not yet active
+      let ttl = 0;
+      for (const s of cell.segments) {
+        if (s.counter >= 0) ttl = Math.max(ttl, (s.frameCount - s.counter) * ORIGINAL_TICK_MS);
+      }
+      const frame = Math.floor(seg.counter);
+      return [{
+        x: cell.x, y: cell.y, ttl, age: frame * ORIGINAL_TICK_MS,
+        asset: seg.asset, group: seg.group, frame, role: seg.role, dir: seg.dir,
+      }];
+    });
     return {
       frame: this.frame,
       timeMs: this.frame * ORIGINAL_TICK_MS,
       bombers,
       bombs: this.bombs.map((b) => ({ id: b.id, x: b.x, y: b.y, owner: b.owner, timer: b.timer, power: b.power })),
-      explosions: this.fires.map((f) => ({ x: f.x, y: f.y, ttl: f.ttl, age: f.age, role: f.role, dir: f.dir })),
+      explosions,
       items: this.items.map((i) => ({ id: i.id, x: i.x, y: i.y, item: i.asset })),
       destroyed: this.destroyed,
     };

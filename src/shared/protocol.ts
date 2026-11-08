@@ -108,7 +108,9 @@ export interface GameInitState {
   cells: MapCell[];
   players: InitPlayer[];
   fuseMs: number;
-  explosionMs: number;
+  /** @deprecated legacy effect-scheduling base; exact fire lifetime is per
+   * ObjectTable animation group and is carried by ExplosionState. */
+  explosionMs?: number;
 }
 export interface BomberState {
   id: string;
@@ -120,6 +122,8 @@ export interface BomberState {
   bombCount: number;
   power: number;
   bot: boolean;
+  /** true while the authoritative grid move is in progress (walk animation). */
+  moving?: boolean;
 }
 export interface BombState {
   id: number;
@@ -132,12 +136,19 @@ export interface BombState {
 export interface ExplosionState {
   x: number;
   y: number;
+  /** remaining active lifetime of the drawn flame segment, ms */
   ttl: number;
-  /** ms since this cell ignited (for original animation phase selection) */
+  /** ms since the drawn segment ignited (counter * 30ms) */
   age?: number;
-  /** center / arm / tip, used to pick the directional fire artwork */
+  /** ObjectTable animation asset, e.g. Bomb/Fire00. */
+  asset?: string;
+  /** Flame/Flame group index (center power-1, directional 15*dir+14+range). */
+  group?: number;
+  /** logical I16 image index; CGOFlame uses the segment tick counter directly. */
+  frame?: number;
+  /** @deprecated center / arm / tip role kept for older snapshots/debug. */
   role?: "center" | "arm" | "tip";
-  /** 0 down, 1 up, 2 left, 3 right (arm/tip direction from bomb center) */
+  /** @deprecated 0 down, 1 up, 2 left, 3 right. */
   dir?: number;
 }
 export interface ItemState {

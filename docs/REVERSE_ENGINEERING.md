@@ -120,7 +120,7 @@ RLE（每像素）：命令位元組 `cmd`，`run = cmd & 0x3F`：
 - 加密 entry 共 325：Fx 323（Attr×3、Map×319、ObjectTable×1）、CharTE/EmoTE ObjectTable 各 1。
 
 ### 6.4 核心表格（已解出）
-- `ObjectTable/ObjectTable`（Fx）：`[u32 count]{[u32 len][name][u32 offset]}`，1187 個名稱。**地圖 grid 的數值 ID 即此表索引**（例：231=`Tile00_Ground/Road00`，244=`Tile00_Static/Tree00`）。
+- `ObjectTable/ObjectTable`（Fx）：`[u32 count]{[u32 len][name][u32 offset]}`，1187 個名稱。**地圖 grid 的數值 ID 即此表索引**（例：231=`Tile00_Ground/Road00`，244=`Tile00_Static/Tree00`）。`offset` 是 **絕對檔案偏移** 指向 `CGameObjectTemplate` description（`sub_4625B7`）：`[u32 groupCount]{[u32 nameLen][name][u32 assetLen][asset][u32 frameCount]{[i32 logicalImageIndex][i32 durationTicks]}}`；`0xffffffff` 代表無 description 的分類。已解出 1103 個 animated objects / 3478 groups / 19412 frame pairs → `data/original/objectAnimations.json`（§8.5）。
 - `Attr/BomberAttr`：`{[u32 len][name][10×u32 stats]}`，11 角色 C00–C10。stat0=類別(0/1/2)。
   **語意已由 CGOBomber debug dump（`m_nSpeed`/`m_nBombCount`/`m_nBombPower`）與道具上限鉗制常式交叉確認**：
   stat1=基礎速度(`m_nSpeed`, `sub_5C6BEC`)、stat2=速度上限(`sub_447936`)、
@@ -149,7 +149,7 @@ RLE（每像素）：命令位元組 `cmd`，`run = cmd & 0x3F`：
 - 消費解密原版資料：15×13 map grid、TileInfo type（0 ground/1 static/2 box/3 passable）、BomberAttr 角色數值、ItemAttr 掉落權重。
 - TILE=40；十字傳播、靜態牆擋、紙箱破壞→權重掉落、連鎖引爆、道具拾取（炸彈/威力/速度/MaxPower/壞道具）、死亡/勝負。
 - **更新週期已確認為 30ms fixed step**（§8.2）；`m_nSpeed` 以 px/30ms 換算。炸彈信管改用 exe practice/local 路徑的 **2000ms 參考值**（`sub_4E87D8(...,2000)`）；online fuse 由 server 決定，client 僅對 received schedule delta 做 >=1000ms 鉗制（`sub_4E8597`）。
-- 火焰 cell TTL 目前仍用 `EXPLOSION_BASE_MS=300` 作為 **interim** 值；`sub_442FF7` 的 300 已證實是 effect-scheduling base，**不是已證實的 flame lifetime**。真正的 `CGOFlame` 移除時機由 animation count 驅動（`sub_45436D` / `sub_45FE8B`），預設 asset `Flame/Flame` 不在 extracted archives，待補。
+- **火焰已改為 animation-driven `CGOFlame`（不再使用 interim TTL）**：normal bomb center group=`power-1`（`FireC01..`，9–18 pairs → **270–540ms**）；方向 group=`15*dir+14+remainingRange`（`FireL/U/R/D`，19 pairs → **570ms**），`remainingRange=power-(distance-1)`。每格 segment counter 初始 `-(distance-1)`（逐格 30ms 傳播 delay），`>=0` 才 active/造成傷害，logical image=counter，`>=frameCount` 移除（`sub_454188/45436D/454545/45FE8B`）；每格最多保留 15 個 segments。`sub_442FF7` 的 300 只是 effect-scheduling base，**已從 sim TTL 移除**。
 - 簡單 bot AI：閃避即將爆炸格、相鄰紙箱/敵人時放炸彈後撤退、貪婪 seeking 紙箱/道具。空房補到地圖 spawn 數（至少 4、上限 8）；Village00 補 4，Village05 補 8。
 - 30ms authoritative fixed step + catch-up cap 15 → `gameFrame` snapshot；`gameInput` 帶 seq。
 
@@ -157,12 +157,12 @@ RLE（每像素）：命令位元組 `cmd`，`run = cmd & 0x3F`：
 - ObjectTable 名稱→asset 路徑映射：`Tile00_Ground/Road00` → `Tile00/Road00`（去掉 `_類別` 後綴）。
 - 原版 JPEG `Game/CAStage` 背景；map viewport origin 由 `sub_4E47B4` 確認：`x=40*(15-width)/2+20`、`y=40*(13-height)/2+41`（15×13 → (20,41)）。地磚用 pivot formula `x-pivotX, y-pivotY+39`，不再把 UI dx/dy 套到地磚。
 - 畫 ground/object/item/bomb/fire/character（依 y 排序）；方向鍵/WASD 移動、空白鍵/Ctrl 放水球；累積 destroyed 格。Characters/bombs/items 使用 logical I16 images；右側 HUD 使用原版 Timer/ItemBox/Portrait/Exit assets。
-- **爆炸 sprite 修正**：`Bomb/Fire00` 是藍色水波，但 raw physical frame 不是 animation cell；它含 100 個 logical images over 53 pages。目前依 age/role 選 logical image（群組映射仍 provisional），預設 `Flame/Flame` 缺失。
+- **爆炸/動畫 sprite 已對齊 ObjectTable**：`Flame/Flame` 是 ObjectTable template 名稱（不是缺失 asset），其 groups 指向 `Bomb/Fire00`（100 logical images / 53 pages）與 `Bomb/TimebombFrame`。Server snapshot 直接送 `asset/group/frame`，client 畫對應 logical image，不再用 age/role heuristic 或執行緒 flip。`Bomb/Bomb` default loop = 4 frames × 6 ticks = **720ms**；角色 walk groups 20–23 = 6 frames × 3 ticks = **540ms**（取代舊 120ms heuristic），idle 用 stop group frame 0。
 - _headless 驗證_：`tools/ui_preview.ts` 用真實 Login/SelectServer/Lobby/Prepare/GameStage + @napi-rs/canvas 輸出預覽；`tools/game_preview.ts` 為其 legacy entry。GameStage 在 Village00 真實 simulation frame 渲染地圖/角色/水球/水波/道具/HUD。
 - _WS 煙霧測試_：`tools/smoke_game.ts` SMOKE_OK；`tools/smoke_rooms.ts` ROOMS_OK（channel isolation、host/ready enforcement、character/map、start、in-game leave、cleanup）。
 
 ### 7.4 仍待（faithful 還原）
-- 精確 online fuse、flame lifetime/animation table、爆炸傳播逐格 delay；角色動畫幀率；道具完整效果（Punch/Hollow/Roller 等）。
+- 精確 online fuse；特殊炸彈/角色動畫狀態（remote/blind/sprinkler、throw/dash/ghost/ride 等）；道具完整效果（Punch/Hollow/Roller 等）。Normal flame lifetime/animation table 與逐格傳播 delay 已實作（§8.5）。
 - UI 細節：channel tab 類別、房間 slot open/close、map preview thumbnails、原版結算完整報表、IME/聊天過濾。
 - WebGPU 實機硬體呈現驗證。已用 transient headless Chromium（playwright-core + @sparticuz/chromium）跑完 login→channel→lobby→create→prepare→start→game→exit，Canvas2D fallback 零 page error；並修复 rAF 之間快速 click 遺失（`Input.clicked` 改由 release flag 決定）與 WebGPU texture upload（改用 256-byte row-aligned `writeTexture`，避免 SwiftShader external ImageBitmap/JPEG reference 失效）。Headless SwiftShader 可取得 adapter 但截圖不可靠，不作為視覺验收。
 
@@ -189,7 +189,7 @@ source rect = (sx, sy, ex-sx, ey-sy) inside frames[frameIndex]
 - Server `GameServer.startSimulation` 用 `FixedStepper`（`src/shared/timing.ts`）在 30ms interval callback 內補幀；client stage update 改用 ms，GameStage input send threshold=30ms。
 - 移動 `m_nSpeed` 是 pixels per 30ms update；已移除 interim `speed * dt / 50`。
 - Practice/local explosion scheduling：`sub_4E87D8(..., 2000)`；client `sub_4E8597` 對 received delta 鉗制 >=1000。這支持 **2000ms practice fuse 參考**，但 online fuse 仍 server-authoritative。
-- `sub_442FF7` 的 300 经 `sub_4E8968` → packet 108（`sub_4E8DC1`）消費，是 effect-scheduling base；**不得標為已證實 fire TTL**。`CGOFlame::sub_45436D` 在 frame counter >= `sub_45FE8B` animation count 時移除 segment；exact lifetime 待 animation table/預設 Flame asset。
+- `sub_442FF7` 的 300 经 `sub_4E8968` → packet 108（`sub_4E8DC1`）消費，是 effect-scheduling base；**不得標為 fire TTL**。Exact flame lifetime 已由 ObjectTable animation count 解出並實作：`CGOFlame::sub_45436D` 在 counter >= `sub_45FE8B` frame count 時移除 segment；`Flame/Flame` center 9–18 ticks、directional 19 ticks（§8.5）。
 
 ### 8.3 原版 UI 座標（已提取並實作）
 - SelectServer/channel（`sub_56DBA5/56D34E`）：tab (401,63)；arrows (490,508)/(676,508)；page buttons x=521+30i,y=511；10 channels/page x=428/595,y=218+56·floor(i/2)。Server 提供 5 pages×10 channels。
@@ -199,3 +199,13 @@ source rect = (sx, sy, ex-sx, ey-sy) inside frames[frameIndex]
 
 ### 8.4 Server lifecycle（原創，語意對照 client）
 已補：server/channel 隔離、`selectChannel`、mapList、duplicate nickname 拒絕、host/ready/start 驗證、create/join/leave、host transfer、in-game leave eliminate、character/map selection、post-game `returnToRoom`、bot fill 到 map spawn count（4–8）。gameEnd 後 room 進入封閉的 `results` 狀態；每位玩家保留自己的結算畫面，按 Enter/OK 後個別回準備階段（尚未全員返回前禁用開始/選圖/加入），全員返回或離開後才重設 ready 並開放房間。`tests/serverLifecycle.test.ts` 用 fake timer/socket 直接驗證此 round-trip。
+
+### 8.5 ObjectTable animation tables（已解出並實作）
+- **來源**：animation groups 不在 I16 header，也不在 `fxdynimginfo.ssd`（該檔是 `sub_49E093` 寫出、`sub_49E167` 讀取的 runtime cache，初始 commit 前已刪除，不需還原）。真正來源是 `ObjectTable/ObjectTable` 的 description payload：index loader `sub_462364`，parser `sub_4625B7`，template instantiation `sub_4630A8/4632D5`。
+- **格式**：description = `[u32 groupCount]`，每 group = `[u32 nameLen][name][u32 assetLen][asset][u32 frameCount]` + `frameCount × (i32 logicalImageIndex, i32 durationTicks)`。duration 单位是 30ms fixed tick；`-1` 代表 hold。Full parse：**1103 objects / 3478 groups / 19412 frame pairs, 0 errors** → `data/original/objectAnimations.json`（`tools/extract_original_data.py::parse_object_animations`）。
+- **Generic playback**（`CGameObjectTemplate::sub_45F608`）：每 tick counter+1；counter < duration 則停留當前 logical image；duration=-1 永久 hold；否則 advance 下一 pair，結尾依 loop flag 歸零或 clamp。`src/shared/animations.ts::animationImageAtTicks` 實作此語意。
+- **CGOFlame**：`sub_45FE8B` 回傳 group 的 frame-pair count；`sub_45436D` 在 segment counter >= count 時移除；`sub_454545` 選最新 non-negative segment，設 group 並用 counter 當 logical image index。Normal scheduling：center `sub_4E61E3` 送 `power-1`；arms `sub_4E3CBE` 送 `15*dir + 14 + (power - distanceIndex)`，counter 初始 `0,-1,-2,…`。`Flame/Flame` 76 groups、asset `Bomb/Fire00`（group 75 `FireTimebomb` → `Bomb/TimebombFrame`），所有 duration=1：
+  - groups 0–14 `FireC01..10` center：power 1–10 為 9,10,…,18 frames（270–540ms），11–15 cap 18。
+  - groups 15–29 L、30–44 U、45–59 R、60–74 D：每 group **19 frames = 570ms**；power 1 tip 用各方向 `01`，高 power 在近中心格插入 body cells。
+- **Other recovered loops**：`Bomb/Bomb` 5 groups（Default/Remote/Blind/Sprinkler×2），default `Bomb/Bomb00` pairs `(0,6),(1,6),(2,6),(3,6)` → 24 ticks = **720ms loop**。`Bomb/Bubble` Lock/ExpLive/ExpKill on `Bomb/Bubble00`。`Character/C00_A` 80 groups：Walk L/U/R/D groups 20–23 = 6 pairs × 3 ticks = **540ms**（sequence 0,1,2,0,3,4）；Stop 12–15 single frame @100；Throw 16–19 = (2,1,1,2) ticks = 180ms；Dash 76–79 9 frames。
+- **實作/驗證**：server `GameSimulation` 每格保存最多 15 個 flame segments，snapshot 送 active segment 的 `asset/group/frame/ttl`；client `GameStage` 直接畫 Fire00 logical frame，炸彈/角色走路改用 duration tables。所有 manifest 可解析 group 的 logical image index 均落在 asset image count 內（0 out-of-range；character `_A` 對應 `_ALayerStatic`）。`tests/animations.test.ts` 驗證 group counts、center/arm selection、generic playback、power-1 center 9 ticks vs arms 19 ticks、power-2 第二環 delay 1 tick。`bun test` 13 pass / 492 expect；`bun run preview` UI_PREVIEW_OK；live `bun run smoke` ROOMS_OK + SMOKE_OK；headless Chromium BROWSER_SMOKE_OK（Canvas2D fallback, errors []）。

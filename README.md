@@ -29,8 +29,12 @@ tools/                asset pipeline (I16 RLE decoder -> PNG, manifest)
   i16.ts              faithful port of CDataI16::sub_678590 + sub_66F050
   png.ts              minimal RGBA PNG encoder
   asset-pipeline.ts   walks extracted/, emits build/assets + build/manifest.json
+  extract_original_data.py  decrypts + CRC-verifies Attr/Map/TileInfo/ObjectTable
+                            and parses ObjectTable animation descriptions
 src/
   shared/protocol.ts  client<->server messages (server is original)
+  shared/timing.ts    30ms fixed-step constants + catch-up stepper
+  shared/animations.ts ObjectTable animation groups + CGOFlame/generic playback
   client/
     engine/           renderer (WebGPU/Canvas2D), assets, input, types (800x600, 40px tile)
     ui/               CCtrlButton/CCtrlEdit ports, text helper
@@ -47,7 +51,8 @@ docs/REVERSE_ENGINEERING.md   analysis of record (formats, constants, exe line r
 - ✅ Original FxFont (.fft) decoded & rendering (regular + bold, per-glyph advance); headless-verified.
 - ✅ Faithful stage flow using original JPEG backgrounds and exe-extracted coordinates: Login → SelectServer/Channel → Lobby → Prepare → Game. Includes room create/join/ready/host/start, character/map selection, chat, game HUD, result overlay and return-to-room.
 - ✅ Gameplay vertical slice: authoritative **30ms fixed-step** simulation on decrypted 15×13 maps — movement, 2000ms practice-reference water bombs, cross explosion + chain, box→weighted item drops, pickup, death/win, AI bots filling map spawn slots. Original map viewport `(20,41)` recovered from `sub_4E47B4`.
-- ✅ Verification: `bun test` (timing, I16 logical images, gameEnd→results→returnToRoom lifecycle, inter-frame click regression), `tools/smoke_rooms.ts` ROOMS_OK, `tools/smoke_game.ts` SMOKE_OK, `tools/ui_preview.ts` renders the real stages headlessly (`build/*_preview.png`). A transient headless Chromium smoke also drove login→channel→lobby→create→prepare→start→game→exit with zero page errors on the Canvas2D fallback.
-- 🚧 Still provisional / unverified: online fuse authority details, exact flame lifetime (`Flame/Flame` default asset missing; `CGOFlame` lifetime is animation-driven), Fire00 role/group mapping, full item effects (Punch/Hollow/Roller), channel tab categories, full original result report, and WebGPU presentation on a real hardware browser (headless SwiftShader initializes the adapter but is not a reliable visual target).
+- ✅ **ObjectTable animation tables recovered** (`sub_4625B7`): 1,103 animated objects / 3,478 groups / 19,412 frame pairs in `data/original/objectAnimations.json`. `CGOFlame` now uses the exact `Flame/Flame` groups — center lifetime 270–540ms by power, directional arms 570ms, one-tick-per-cell propagation delay, logical image = tick counter. `Bomb/Fire00` is drawn from the authoritative group/frame (no role/age heuristic). Bomb idle loop (720ms) and character walk cycles (540ms) also use the original duration tables.
+- ✅ Verification: `bun test` (timing, I16 logical images, ObjectTable animations + CGOFlame lifetime/propagation, gameEnd→results→returnToRoom lifecycle, inter-frame click regression), `tools/smoke_rooms.ts` ROOMS_OK, `tools/smoke_game.ts` SMOKE_OK, `tools/ui_preview.ts` renders the real stages headlessly (`build/*_preview.png`). A transient headless Chromium smoke also drove login→channel→lobby→create→prepare→start→game→exit with zero page errors on the Canvas2D fallback.
+- 🚧 Still provisional / unverified: online fuse authority details, special bomb/character animation states (throw/dash/ghost/ride, remote/blind/sprinkler bombs), full item effects (Punch/Hollow/Roller), channel tab categories, full original result report, and WebGPU presentation on a real hardware browser (headless SwiftShader initializes the adapter but is not a reliable visual target).
 
 See `docs/REVERSE_ENGINEERING.md` for the full analysis and exe cross-references.

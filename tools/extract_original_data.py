@@ -63,6 +63,48 @@ def parse_object_table(arch, name):
     return ents
 
 
+def parse_object_animations():
+    """Parse CGameObjectTemplate descriptions from ObjectTable/ObjectTable.
+
+    Recovered from CA.exe sub_4625B7: after the name/offset directory, each
+    offset points to [u32 groupCount] then groups:
+      [u32 nameLen][name][u32 assetLen][asset][u32 frameCount]
+      [i32 logicalImageIndex, i32 durationTicks] * frameCount
+    Duration is in the original 30 ms fixed-step domain; -1 means hold.
+    Category rows have offset 0xffffffff and no description.
+    """
+    b = d.read_entry('Fx', 'ObjectTable/ObjectTable')
+    out = {}
+    for ent in parse_object_table('Fx', 'ObjectTable/ObjectTable'):
+        off = ent['offset']
+        if off == 0xffffffff:
+            continue
+        p = off
+        count = u32(b, p); p += 4
+        if count > 10000:
+            raise ValueError(f"bad animation group count {ent['name']}: {count}")
+        groups = []
+        for _ in range(count):
+            ln = u32(b, p); p += 4
+            if ln > 256:
+                raise ValueError(f"bad animation group name len {ent['name']}: {ln}")
+            name = b[p:p + ln].decode('big5'); p += ln
+            alen = u32(b, p); p += 4
+            if alen >= 0x80:
+                raise ValueError(f"bad animation asset len {ent['name']}: {alen}")
+            asset = b[p:p + alen].decode('big5'); p += alen
+            fc = u32(b, p); p += 4
+            if fc > 10000:
+                raise ValueError(f"bad animation frame count {ent['name']}: {fc}")
+            frames = []
+            for _ in range(fc):
+                idx, duration = struct.unpack_from('<ii', b, p); p += 8
+                frames.append([idx, duration])
+            groups.append({'name': name, 'asset': asset, 'frames': frames})
+        out[ent['name']] = groups
+    return out
+
+
 def parse_bomber_attr():
     b = d.read_entry('Fx', 'Attr/BomberAttr')
     o = 0
@@ -176,6 +218,8 @@ def main():
     decrypt_all()
     object_names = [e['name'] for e in parse_object_table('Fx', 'ObjectTable/ObjectTable')]
     (OUT / 'objectTable.json').write_text(json.dumps(object_names, ensure_ascii=False))
+    animations = parse_object_animations()
+    (OUT / 'objectAnimations.json').write_text(json.dumps(animations, ensure_ascii=False))
     chars = parse_bomber_attr()
     (OUT / 'bomberAttr.json').write_text(json.dumps(chars, ensure_ascii=False, indent=1))
     items = parse_item_attr()
@@ -199,7 +243,8 @@ def main():
         maps[name[4:]] = m
     (OUT / 'maps.json').write_text(json.dumps(maps, ensure_ascii=False))
     print(f'characters={len(chars)} items={len(items["items"])} categories={len(items["categories"])} '
-          f'mapGroups={len(groups)} tiles={len(tiles)} maps={len(maps)} objectNames={len(object_names)}')
+          f'mapGroups={len(groups)} tiles={len(tiles)} maps={len(maps)} objectNames={len(object_names)} '
+          f'animatedObjects={len(animations)} animationGroups={sum(len(g) for g in animations.values())}')
     # quick summary of a canonical map
     v = maps.get('Village00')
     if v:

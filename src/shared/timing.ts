@@ -7,7 +7,9 @@
  *   sub_4E87D8(..., 2000). Online fuse is server-authoritative; the client
  *   clamps received schedule deltas to >= 1000 ms in sub_4E8597.
  * - EXPLOSION_BASE_MS: sub_442FF7 initializes its timing accumulator at 300.
- *   This is an effect-scheduling base, NOT a proven flame lifetime.
+ *   This is an effect-scheduling base, NOT a flame lifetime; the simulation
+ *   now derives CGOFlame lifetimes from ObjectTable animation frame counts
+ *   (src/shared/animations.ts, CA.exe sub_45FE8B/45436D).
  */
 export const ORIGINAL_TICK_MS = 30;
 export const PRACTICE_FUSE_MS = 2000;
