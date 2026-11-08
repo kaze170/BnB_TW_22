@@ -10,6 +10,7 @@ import { LobbyStage } from "./stages/LobbyStage.ts";
 import { PrepareStage } from "./stages/PrepareStage.ts";
 import { GameStage } from "./stages/GameStage.ts";
 import { SCREEN_W, SCREEN_H } from "./engine/types.ts";
+import { loadFonts } from "./ui/font.ts";
 
 async function boot() {
   const canvas = document.getElementById("game") as HTMLCanvasElement;
@@ -17,6 +18,8 @@ async function boot() {
   const assets = new Assets();
   statusEl.textContent = "載入資產清單…";
   await assets.loadManifest();
+  statusEl.textContent = "載入原版字型…";
+  await loadFonts();
 
   const renderer = await createRenderer(canvas);
   statusEl.textContent = `渲染後端：${renderer.kind === "webgpu" ? "WebGPU" : "Canvas2D（fallback）"}`;

@@ -81,6 +81,14 @@ const server = Bun.serve({
         headers: { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": "public, max-age=3600" },
       });
     }
+    if (path.startsWith("/fonts/")) {
+      const file = Bun.file(join(ROOT, path.slice("/fonts/".length)));
+      return new Response(file, { headers: { "content-type": "application/octet-stream", "cache-control": "public, max-age=86400" } });
+    }
+    if (path.startsWith("/data/")) {
+      const file = Bun.file(join(ROOT, "data", "original", path.slice("/data/".length)));
+      return new Response(file, { headers: { "content-type": "application/json", "cache-control": "public, max-age=3600" } });
+    }
     if (path === "/health") return new Response(JSON.stringify({ ok: true, online: game.onlineCount }));
     return new Response("not found", { status: 404 });
   },

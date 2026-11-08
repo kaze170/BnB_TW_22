@@ -42,6 +42,9 @@ docs/REVERSE_ENGINEERING.md   analysis of record (formats, constants, exe line r
 - ✅ All 9,999 original entries converted (9,091 sprites / 74,190 frames).
 - ✅ Login screen layout extracted from `CLoginStage` (sub_5689DC / sub_5694A3) and verified pixel-perfect.
 - ✅ Engine: WebGPU sprite batcher + Canvas2D fallback; stage flow; self-created server (login→lobby→room→game lifecycle).
-- 🚧 In progress: SelectServer/Lobby/Prepare exact UI layout; full gameplay (CGOBomber, bomb fuse/explosion chain, items, monster AI); FxFont (.fft); Attr decryption.
+- ✅ Attr/Map/TileInfo/ObjectTable decryption cracked & CRC-verified (325/325); original data in `data/original/`.
+- ✅ Original FxFont (.fft) decoded & rendering (regular + bold, per-glyph advance); headless-verified.
+- ✅ Gameplay vertical slice: authoritative 20Hz simulation on decrypted 15×13 maps — movement, bombs, cross water-explosion + chain, box→weighted item drops, pickup, death/win, AI bots; client renders original tiles/chars/bombs/fire/items. WS smoke test + headless render verified.
+- 🚧 In progress: exact bomb-fuse/movement timing constants; SelectServer/Lobby/Prepare/Game-HUD faithful UI; full item effects & character animation.
 
 See `docs/REVERSE_ENGINEERING.md` for the full analysis and exe cross-references.

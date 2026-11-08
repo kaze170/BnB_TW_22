@@ -4,7 +4,9 @@
  * simulation will be ported faithfully from CA.exe in the gameplay phase; this
  * establishes the connection/room lifecycle so the client flow is complete.
  */
-import type { C2S, S2C, RoomState, ServerInfo, GameInitState } from "../shared/protocol.ts";
+import type { C2S, S2C, RoomState, ServerInfo } from "../shared/protocol.ts";
+import { GameSimulation } from "./simulation.ts";
+import { CHARACTERS } from "./gameData.ts";
 import type { ServerWebSocket } from "bun";
 
 interface Client {
@@ -23,6 +25,8 @@ export class GameServer {
   private clients = new Map<ServerWebSocket<unknown>, Client>();
   private rooms = new Map<number, RoomState>();
   private nextRoom = 1;
+  private sims = new Map<number, { sim: GameSimulation; timer: ReturnType<typeof setInterval> }>();
+  private playing = new Set<number>();
 
   get onlineCount() {
     return this.clients.size;
@@ -119,12 +123,13 @@ export class GameServer {
       }
       case "startGame": {
         const room = c.room != null ? this.rooms.get(c.room) : null;
-        if (!room) return;
-        const init = this.makeMap(room);
-        for (const p of room.players) {
-          const pc = [...this.clients.values()].find((cl) => cl.id === p.id);
-          if (pc) this.send(pc.ws, { t: "gameStart", state: init });
-        }
+        if (!room || this.playing.has(room.id)) return;
+        this.startSimulation(room);
+        break;
+      }
+      case "gameInput": {
+        const entry = c.room != null ? this.sims.get(c.room) : null;
+        entry?.sim.setInput(c.id, msg.dx, msg.dy, msg.bomb);
         break;
       }
       case "chat": {
@@ -145,8 +150,17 @@ export class GameServer {
     c.room = null;
     if (!room) return;
     room.players = room.players.filter((p) => p.id !== c.id);
-    if (room.players.length === 0) this.rooms.delete(room.id);
-    else this.broadcastRoom(room);
+    if (room.players.length === 0) {
+      this.rooms.delete(room.id);
+      const entry = this.sims.get(room.id);
+      if (entry) {
+        clearInterval(entry.timer);
+        this.sims.delete(room.id);
+        this.playing.delete(room.id);
+      }
+    } else {
+      this.broadcastRoom(room);
+    }
   }
 
   private broadcastRoom(room: RoomState) {
@@ -161,18 +175,40 @@ export class GameServer {
     for (const c of this.clients.values()) this.send(c.ws, { t: "lobbyState", rooms, users: this.clients.size });
   }
 
-  /** Placeholder map generator; faithful map data (Attr/MapGroup, TileInfoList) next phase. */
-  private makeMap(room: RoomState): GameInitState {
-    const width = 15;
-    const height = 13;
-    const tiles = new Array(width * height).fill(0);
-    return {
-      map: room.map,
-      width,
-      height,
-      tiles,
-      players: room.players.map((p) => ({ id: p.id, slot: p.slot, character: p.character, x: 1 + p.slot, y: 1 })),
-    };
+  /** Start an authoritative match on the decrypted original map. Empty slots are
+   * filled with AI bots so a single player can validate gameplay (project decision). */
+  private startSimulation(room: RoomState) {
+    const players = room.players.map((p) => ({ id: p.id, slot: p.slot, character: p.character, bot: false }));
+    let slot = players.length;
+    while (players.length < 4) {
+      players.push({ id: `bot-${room.id}-${slot}`, slot, character: Math.floor(Math.random() * CHARACTERS.length), bot: true });
+      slot++;
+    }
+    const sim = new GameSimulation(room.map, players);
+    const init = sim.initState();
+    this.playing.add(room.id);
+    for (const p of room.players) {
+      const pc = [...this.clients.values()].find((cl) => cl.id === p.id);
+      if (pc) this.send(pc.ws, { t: "gameStart", state: init });
+    }
+    const timer = setInterval(() => {
+      sim.tick(50);
+      const snap = sim.snapshot();
+      for (const p of room.players) {
+        const pc = [...this.clients.values()].find((cl) => cl.id === p.id);
+        if (pc) this.send(pc.ws, { t: "gameFrame", frame: snap.frame, state: snap });
+      }
+      if (sim.over) {
+        clearInterval(timer);
+        this.sims.delete(room.id);
+        this.playing.delete(room.id);
+        for (const p of room.players) {
+          const pc = [...this.clients.values()].find((cl) => cl.id === p.id);
+          if (pc) this.send(pc.ws, { t: "gameEnd", result: { winner: sim.winner, draw: sim.draw } });
+        }
+      }
+    }, 50);
+    this.sims.set(room.id, { sim, timer });
   }
 }
 

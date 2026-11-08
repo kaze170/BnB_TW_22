@@ -121,7 +121,12 @@ RLE（每像素）：命令位元組 `cmd`，`run = cmd & 0x3F`：
 
 ### 6.4 核心表格（已解出）
 - `ObjectTable/ObjectTable`（Fx）：`[u32 count]{[u32 len][name][u32 offset]}`，1187 個名稱。**地圖 grid 的數值 ID 即此表索引**（例：231=`Tile00_Ground/Road00`，244=`Tile00_Static/Tree00`）。
-- `Attr/BomberAttr`：`{[u32 len][name][10×u32 stats]}`，11 角色 C00–C10。stat0=類別(0/1/2)；stat5(record+372)=炸彈上限（C00=1）；其餘欄位對應速度/威力等（存取子 `sub_5C67D9…sub_5C686A`）。
+- `Attr/BomberAttr`：`{[u32 len][name][10×u32 stats]}`，11 角色 C00–C10。stat0=類別(0/1/2)。
+  **語意已由 CGOBomber debug dump（`m_nSpeed`/`m_nBombCount`/`m_nBombPower`）與道具上限鉗制常式交叉確認**：
+  stat1=基礎速度(`m_nSpeed`, `sub_5C6BEC`)、stat2=速度上限(`sub_447936`)、
+  stat3=基礎炸彈數(`sub_5C6C27`)、stat4=炸彈上限(`CBombOwner sub_4385BE`)、
+  stat5=基礎威力(`sub_5C6C62`)、stat6=威力上限(`sub_4386BE`)。
+  C00=[0,5,7,1,10,1,7,…] → 速度5(上限7)、炸彈1(上限10)、威力1(上限7)。
 - `Attr/ItemAttr`：header 3 dwords + 12 類別 + 131 道具（名稱×2 + 8 dwords）。
 - `Attr/MapGroup`：3 群組（PraticeMapGroup…），各含地圖名稱清單。
 - `TileInfo/TileInfoList`：`u32 xmlLen + TinyXML`；899 個 `<Tile Name Data>`，Data=104 hex chars → 52 bytes。dword0=type（0 ground/1 static/2 box/3 passable），dword1/2=寬高。
@@ -131,3 +136,29 @@ RLE（每像素）：命令位元組 `cmd`，`run = cmd & 0x3F`：
 - 32-byte header；glyph count=65535（Unicode BMP）。`CxUni.fft`：width=12,height=12,bitmapBytes=18。
 - 每 glyph：`[u8 advance][18 bytes bitmap]`，bitmap 為 **MSB-first、row-major、連續 packed**（12×12=144 bits）。空白 advance=6，中文 advance=12。
 - 檔案後段另有 (w+2)×(h+2) 外框/粗體 bitmap。Web 還原：解碼成 atlas，依 advance 排字。
+
+## 7. 已實作：原創字型 + 遊戲垂直切片（2026-11-08）
+
+### 7.1 FxFont Web 還原（`src/client/ui/font.ts`）
+- 解碼 `CxUni.fft`/`CxUniBold.fft` 主面 → 256×256 cell atlas（Unicode BMP 索引），依 per-glyph advance 排字，`source-in` 上色。
+- `textSprite()`/`measureText()` 快取；字型未載入時退回系統字。`main.ts` 於載入 manifest 後 `await loadFonts()`。
+- 伺服器 `/fonts/*` 路由指向 repo 根目錄的 `.fft`；`/data/*` 提供 `data/original/*.json`。
+- _headless 驗證_：`tools/font_preview.ts`（@napi-rs/canvas）實際渲染「彈水阿給 BnB／登入 Login 123／房間準備中…」→ 3584 個點亮像素，FONT_OK。
+
+### 7.2 遊戲模擬（`src/server/simulation.ts`，server 為原創）
+- 消費解密原版資料：15×13 map grid、TileInfo type（0 ground/1 static/2 box/3 passable）、BomberAttr 角色數值、ItemAttr 掉落權重。
+- TILE=40；爆炸 cell TTL=300ms（`sub_442FF7`）；十字傳播、靜態牆擋、紙箱破壞→權重掉落、連鎖引爆、道具拾取（炸彈/威力/速度/MaxPower/壞道具）、死亡/勝負。
+- Grid-locked 移動（仿 CGOBomber）；`m_nSpeed` 以 px/50ms tick 換算（**interim**，精確 frame timing 待 exe 確認）；炸彈信管 **FUSE_MS=3000 為 interim**（常數尚未在 exe 定位）。
+- 簡單 bot AI：閃避即将爆炸格、相鄰紙箱/敵人時放炸彈後撤退、貪婪 seeking 紙箱/道具。空房自动補 4 人。
+- 20Hz authoritative tick → `gameFrame` snapshot；`gameInput` 帶 seq。
+
+### 7.3 Client GameStage（`src/client/stages/GameStage.ts`）
+- ObjectTable 名稱→asset 路徑映射：`Tile00_Ground/Road00` → `Tile00/Road00`（去掉 `_類別` 後綴）。
+- 畫 ground/object/item/bomb/fire/character（依 y 排序）；方向鍵移動、空白鍵放炸彈；累積 destroyed 格。
+- **爆炸sprite確認**：`Bomb/Fire00` 是藍色水波（彈水阿給＝水炸彈），frame3=40×40 水波 cell，正確。
+- _headless 驗證_：`tools/game_preview.ts` 跑真實 simulation 於 Village00 並用 extracted sprites 合成 frame → 地圖/角色/炸彈/水波/道具皆正確渲染。
+- _WS 煙霧測試_：`tools/smoke_game.ts` login→room→game，Village00，驗證移動/炸彈/爆炸/破壞/道具/勝負 → SMOKE_OK。
+
+### 7.4 仍待（faithful 還原）
+- 炸彈信管常數、移動 frame timing、爆炸傳播逐格 delay（`sub_442FF7` +75/120/360/200）。
+- SelectServer/Lobby/Prepare 精確 UI 座標；Game HUD/結果畫面；角色動畫幀率；道具完整效果（Punch/Hollow/Roller 等）。

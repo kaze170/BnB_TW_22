@@ -75,13 +75,33 @@ export interface RoomState {
   max: number;
 }
 
-/** Gameplay snapshot types — values/semantics follow CA.exe (40px tiles etc.). */
+/** Gameplay snapshot types — map/character/item data are the decrypted originals
+ * (data/original/*.json); tile=40px, maps 15x13. Server simulation is original. */
+export interface MapCell {
+  ground: string | null;
+  object: string | null;
+  /** TileInfo type of the blocking layer: 0 ground, 1 static, 2 box, 3 passable */
+  kind: number;
+}
+export interface InitPlayer {
+  id: string;
+  slot: number;
+  character: number;
+  x: number;
+  y: number;
+  speed: number;
+  bombCount: number;
+  power: number;
+  bot: boolean;
+}
 export interface GameInitState {
-  map: number;
+  map: string;
   width: number;
   height: number;
-  tiles: number[];
-  players: Array<{ id: string; slot: number; character: number; x: number; y: number }>;
+  cells: MapCell[];
+  players: InitPlayer[];
+  fuseMs: number;
+  explosionMs: number;
 }
 export interface BomberState {
   id: string;
@@ -92,19 +112,35 @@ export interface BomberState {
   speed: number;
   bombCount: number;
   power: number;
+  bot: boolean;
 }
 export interface BombState {
+  id: number;
   x: number;
   y: number;
   owner: string;
   timer: number;
   power: number;
 }
+export interface ExplosionState {
+  x: number;
+  y: number;
+  ttl: number;
+}
+export interface ItemState {
+  id: number;
+  x: number;
+  y: number;
+  item: string;
+}
 export interface GameSnapshot {
+  frame: number;
   bombers: BomberState[];
   bombs: BombState[];
-  tiles: number[];
-  explosions: Array<{ x: number; y: number; ttl: number }>;
+  explosions: ExplosionState[];
+  items: ItemState[];
+  /** cell indices whose box was destroyed this frame (object removed) */
+  destroyed: number[];
 }
 export interface GameResult {
   winner: string | null;
