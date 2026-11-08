@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>爆爆王 BnB — Web 還原</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #0a0e1a;
+        color: #9fb4d8;
+        font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+        overflow: hidden;
+      }
+      #wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+      #game {
+        /* internal 800x600; scale to fit while preserving aspect ratio */
+        width: min(100vw, calc(100vh * 800 / 600 - 40px));
+        max-width: 1000px;
+        aspect-ratio: 800 / 600;
+        image-rendering: pixelated;
+        background: #000;
+        box-shadow: 0 0 40px rgba(0, 120, 255, 0.25);
+        border-radius: 4px;
+        cursor: default;
+      }
+      #status {
+        font-size: 12px;
+        opacity: 0.7;
+        height: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <canvas id="game" width="800" height="600"></canvas>
+      <div id="status">啟動中…</div>
+    </div>
+    <script type="module" src="/client.js"></script>
+  </body>
+</html>

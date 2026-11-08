@@ -1,0 +1,19 @@
+{
+  "name": "bnb-tw-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Faithful web restoration of Crazy Arcade BnB TW (彈水阿給). Client logic/UI/assets strictly follow CA.exe; server is original.",
+  "scripts": {
+    "dev": "bun run src/server/index.ts",
+    "start": "bun run src/server/index.ts",
+    "assets": "bun run tools/asset-pipeline.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "@webgpu/types": "^0.1.52",
+    "typescript": "7.1.0-beta"
+  }
+}

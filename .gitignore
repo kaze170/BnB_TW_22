@@ -1,0 +1,21 @@
+# dependencies
+node_modules/
+
+# generated web assets (built from extracted/ by tools/asset-pipeline.ts)
+# build/ is already ignored below
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# logs
+*.log
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/
+
+# python scratch
+__pycache__/
+*.pyc
