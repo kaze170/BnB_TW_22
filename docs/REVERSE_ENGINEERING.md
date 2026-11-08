@@ -99,3 +99,35 @@ RLE（每像素）：命令位元組 `cmd`，`run = cmd & 0x3F`：
 - 各 Stage 精確 UI 座標（需逐函式從 exe 提取）。
 - 怪物 AI、爆炸連鎖、道具機率等 gameplay 常數（散落 exe，需逐一提取交叉確認）。
 - 平台保護層（GameGuard/nProtect/Nexon 驗證/封包加密）在 Web 無意義 → 建議由自製 Server 模擬或略過。
+## 6. 已驗證：封存解密與核心資料格式（2026-11-08）
+
+> 本節纠正 §2.3/§2.5 的待解狀態。所有結果已用原版 CRC 交叉驗證（325 個加密 entry 全數通過）。
+> 工具：`tools/decrypt.py`、`tools/extract_original_data.py`；輸出：`data/original/*.json`。
+
+### 6.1 `.idx` 索引加密（`sub_673110`）
+- 串流 XOR：`out[0] = key ^ in[0]`；`out[i] = out[i-1] ^ in[i]`；尾 bytes 用最後 dword 逐字节 XOR。
+- **key = 原始第一個 dword**（因為明文標頭 type==0，故 `key^in[0]==0`）。Fx=`0x719CAB30`，CharTE/EmoTE=`0x05B201FC`。
+- 解密後標頭：`[type=0][ver=15][count]`。Fx 3948、CharTE 3046、EmoTE 3005 筆。
+
+### 6.2 `.idx` entry 佈局（`sub_6749C0`，objdump 確認）
+每筆：`[u32 nameLen][name][u32 relOffset][u32 size][u32 mask][u32 checksum]`。
+- CDataFile 144-byte record：`name[128] / absOffset / size / mask / checksum`。
+- **mask 是第三個 dword，checksum 是最後一個 dword**。先前 extracted/ 的 Attr/Map 被萃取工具誤用 checksum 做簡單 XOR，故仍為亂碼；正確做法是讀 `.idd` 原始塊再用 mask 跑 entry cipher。
+
+### 6.3 Entry 加密（`sub_6731A0`）與 CRC（`sub_668E80`）
+- `out[0]=mask ^ in[0] ^ 0x9C6C95CE`；`out[i]=out[i-1] ^ in[i] ^ (i*i*(i+966)*(i+2020)) ^ 0x9C6C95CE`；尾 bytes 用最後 dword XOR。mask==0 → 明文。
+- CRC：poly `0x04C11DB7` 非反射（CRC-32/MPEG-2 形式），init=mask，無 final xor，**對解密後內容**計算；等於 idx checksum。checksum==0/1 時跳過檢查。
+- 加密 entry 共 325：Fx 323（Attr×3、Map×319、ObjectTable×1）、CharTE/EmoTE ObjectTable 各 1。
+
+### 6.4 核心表格（已解出）
+- `ObjectTable/ObjectTable`（Fx）：`[u32 count]{[u32 len][name][u32 offset]}`，1187 個名稱。**地圖 grid 的數值 ID 即此表索引**（例：231=`Tile00_Ground/Road00`，244=`Tile00_Static/Tree00`）。
+- `Attr/BomberAttr`：`{[u32 len][name][10×u32 stats]}`，11 角色 C00–C10。stat0=類別(0/1/2)；stat5(record+372)=炸彈上限（C00=1）；其餘欄位對應速度/威力等（存取子 `sub_5C67D9…sub_5C686A`）。
+- `Attr/ItemAttr`：header 3 dwords + 12 類別 + 131 道具（名稱×2 + 8 dwords）。
+- `Attr/MapGroup`：3 群組（PraticeMapGroup…），各含地圖名稱清單。
+- `TileInfo/TileInfoList`：`u32 xmlLen + TinyXML`；899 個 `<Tile Name Data>`，Data=104 hex chars → 52 bytes。dword0=type（0 ground/1 static/2 box/3 passable），dword1/2=寬高。
+- `Map/*`（`sub_4E5845`，objdump 確認）：319 張，全為 **15×13**。標頭後依序：version(1000)、f1、f2、width、height、spawnCount、4 unknown、fieldA、2 skip、4 misc、2 skip、spawn pairs、linkCount+links、`grid[width*height]`（每格 2×i32：groundId/objectId，-1=無）、drop 清單（name+weight）。Village00 spawns=(13,11),(1,11),(1,1),(13,1)。
+
+### 6.5 `.fft` 字型（`sub_676700`，已解出）
+- 32-byte header；glyph count=65535（Unicode BMP）。`CxUni.fft`：width=12,height=12,bitmapBytes=18。
+- 每 glyph：`[u8 advance][18 bytes bitmap]`，bitmap 為 **MSB-first、row-major、連續 packed**（12×12=144 bits）。空白 advance=6，中文 advance=12。
+- 檔案後段另有 (w+2)×(h+2) 外框/粗體 bitmap。Web 還原：解碼成 atlas，依 advance 排字。

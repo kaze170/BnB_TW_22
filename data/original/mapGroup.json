@@ -1,0 +1,70 @@
+[
+ {
+  "name": "PraticeMapGroup",
+  "maps": [
+   "Village00",
+   "Village05",
+   "Village06",
+   "Village09",
+   "Village10",
+   "Xmas01",
+   "Xmas03",
+   "Xmas06",
+   "Xmas09",
+   "Xmas10",
+   "Forest02",
+   "Forest03",
+   "Forest07",
+   "Forest12",
+   "Forest14",
+   "Ice00",
+   "Ice01",
+   "Ice06",
+   "Ice07",
+   "Ice09",
+   "Desert00",
+   "Desert03",
+   "Desert04",
+   "Desert06",
+   "Desert07",
+   "Factory00",
+   "Factory02",
+   "Factory07",
+   "KFG01",
+   "KFG02",
+   "KFG03",
+   "Mine00",
+   "Mine01",
+   "Mine02",
+   "Mine05",
+   "Mine06",
+   "Ocean00",
+   "Ocean01",
+   "Ocean02",
+   "Ocean04",
+   "Ocean08",
+   "Patrit01",
+   "Patrit04",
+   "Patrit05",
+   "Patrit07"
+  ]
+ },
+ {
+  "name": "LadderMapGroup",
+  "maps": [
+   "Camp08",
+   "Factory07",
+   "Forest07",
+   "Village10",
+   "Tomb12",
+   "Patrit14"
+  ]
+ },
+ {
+  "name": "ReBirthMapGroup",
+  "maps": [
+   "Tomb?",
+   "Cemetery?"
+  ]
+ }
+]
