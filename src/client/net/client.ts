@@ -1,5 +1,5 @@
 /** WebSocket client for the original (self-created) game server. */
-import type { C2S, S2C } from "../../shared/protocol.ts";
+import type { C2S, S2C, UserInfo } from "../../shared/protocol.ts";
 
 type Handler = (msg: S2C) => void;
 
@@ -9,6 +9,10 @@ export class NetClient {
   private anyHandlers = new Set<Handler>();
   private queue: C2S[] = [];
   connected = false;
+  /** Session state cached from authoritative server messages. */
+  user: UserInfo | null = null;
+  mapNames: string[] = [];
+  mapGroups: Array<{ name: string; maps: string[] }> = [];
 
   connect(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -31,6 +35,8 @@ export class NetClient {
         } catch {
           return;
         }
+        if (msg.t === "loginResult" && msg.ok) this.user = msg.user ?? null;
+        if (msg.t === "mapList") { this.mapNames = msg.names; this.mapGroups = msg.groups; }
         this.handlers.get(msg.t)?.forEach((h) => h(msg));
         this.anyHandlers.forEach((h) => h(msg));
       };

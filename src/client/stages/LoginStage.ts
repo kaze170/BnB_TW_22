@@ -11,6 +11,7 @@ import { Stage, type GameContext } from "./stage.ts";
 import { Button, Edit } from "../ui/controls.ts";
 import type { Sprite } from "../engine/assets.ts";
 import { rect } from "../engine/types.ts";
+import { textSprite } from "../ui/text.ts";
 
 export class LoginStage extends Stage {
   private bg!: Sprite;
@@ -22,6 +23,7 @@ export class LoginStage extends Stage {
   private pwEdit!: Edit;
   private status = "";
   private loggingIn = false;
+  private offs: Array<() => void> = [];
 
   override async enter(): Promise<void> {
     const a = this.ctx.assets;
@@ -48,11 +50,11 @@ export class LoginStage extends Stage {
     });
     this.idEdit = new Edit(408, 448, 156, 20, false, { size: 13 });
     this.pwEdit = new Edit(408, 473, 156, 20, true, { size: 13 });
-    this.idEdit.onSubmit = () => (this.pwEdit.focused = true);
+    this.idEdit.onSubmit = () => { this.idEdit.focused = false; this.pwEdit.focused = true; };
     this.pwEdit.onSubmit = () => this.doLogin();
     this.idEdit.focused = true;
 
-    this.ctx.net.on("loginResult", (m) => {
+    this.offs.push(this.ctx.net.on("loginResult", (m) => {
       if (m.t !== "loginResult") return;
       this.loggingIn = false;
       if (m.ok) {
@@ -60,8 +62,13 @@ export class LoginStage extends Stage {
       } else {
         this.status = m.reason ?? "登入失敗";
       }
-    });
+    }));
+    this.offs.push(this.ctx.net.on("error", (m) => {
+      if (m.t === "error") { this.loggingIn = false; this.status = m.message; }
+    }));
   }
+
+  override exit(): void { for (const off of this.offs) off(); this.offs = []; }
 
   private doLogin() {
     if (this.loggingIn) return;
@@ -76,10 +83,10 @@ export class LoginStage extends Stage {
     this.ctx.net.send({ t: "login", id, pw });
   }
 
-  override update(dt: number): void {
+  override update(dtMs: number): void {
     const p = this.ctx.input.beginFrame();
-    this.idEdit.update(p, this.ctx.input, dt);
-    this.pwEdit.update(p, this.ctx.input, dt);
+    this.idEdit.update(p, this.ctx.input, dtMs);
+    this.pwEdit.update(p, this.ctx.input, dtMs);
     this.btnNewId.update(p);
     this.btnOk.update(p);
     this.btnExit.update(p);
@@ -96,6 +103,10 @@ export class LoginStage extends Stage {
     this.btnNewId.draw(r);
     this.btnOk.draw(r);
     this.btnExit.draw(r);
+    if (this.status) {
+      const t = textSprite(this.status, { size: 12, color: "#ffe08a" });
+      r.draw(t, rect(194, 396, t.w, t.h));
+    }
     r.end();
   }
 }

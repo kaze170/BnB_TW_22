@@ -10,6 +10,7 @@ import tileInfoJson from "../../data/original/tileInfo.json";
 import bomberAttrJson from "../../data/original/bomberAttr.json";
 import itemAttrJson from "../../data/original/itemAttr.json";
 import mapGroupJson from "../../data/original/mapGroup.json";
+import { EXPLOSION_BASE_MS, PRACTICE_FUSE_MS } from "../shared/timing.ts";
 
 export interface RawMap {
   version: number; width: number; height: number;
@@ -28,10 +29,13 @@ export const ITEMS = (itemAttrJson as { items: ItemAttr[] }).items;
 export const MAP_GROUPS = mapGroupJson as Array<{ name: string; maps: string[] }>;
 
 export const TILE = 40; // CGOTile: 40px (verified)
-/** Explosion cell lifetime: sub_442FF7 sets *a5 = 300 (ms). */
-export const EXPLOSION_MS = 300;
-/** Bomb fuse. Standard BnB water-balloon fuse; pending exact exe confirmation. */
-export const FUSE_MS = 3000;
+/** Effect-scheduling base from sub_442FF7 (*a5 = 300). The vertical-slice
+ * simulation currently also uses it as an interim fire-cell TTL; the exact
+ * CGOFlame lifetime is animation-driven and still being recovered. */
+export const EXPLOSION_MS = EXPLOSION_BASE_MS;
+/** Fuse used by the exe's practice/local explosion path (sub_4E87D8 ...,2000).
+ * Online play is server-authoritative; this is the faithful local reference. */
+export const FUSE_MS = PRACTICE_FUSE_MS;
 
 export const MAP_NAMES = Object.keys(MAPS).sort();
 

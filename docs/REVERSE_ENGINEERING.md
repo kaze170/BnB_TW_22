@@ -75,7 +75,7 @@ RLE（每像素）：命令位元組 `cmd`，`run = cmd & 0x3F`：
 
 ### 3.3 UI 框架（CCtrl*，27 類）
 `CCtrlWnd`/`CDialogWnd`（視窗/對話框）、`CCtrlButton`/`CCtrlButtonWithText`（按鈕，多狀態圖）、`CCtrlEdit`/`CCtrlEditIME`/`CCtrlMultiEdit`（輸入框，含 IME）、`CCtrlImage`、`CCtrlMsgView`（聊天訊息）、`CTabList`/`CButtonList`。
-- 按鈕圖為多狀態垂直堆疊（normal/hover/press/disabled…），如 `LO_BtLogOk` 99×150 = 5×(99×30)。
+- 按鈕圖由 **logical images** 定址（normal/hover/press/disabled…）。早期「physical frame 垂直堆疊」假設已修正：I16 的 `nFrames` 是打包 texture pages，`nImages` 才是 exe 實際draw的影像；多個狀態可共用同一 page（見 §8.1）。
 - UI 座標/版面配置刻在 exe 各 Stage 初始化函式（**還原時必須逐函式對照，嚴禁自創版面**）。
 
 ### 3.4 網路（NMCO / Nexon Messenger）
@@ -147,18 +147,55 @@ RLE（每像素）：命令位元組 `cmd`，`run = cmd & 0x3F`：
 
 ### 7.2 遊戲模擬（`src/server/simulation.ts`，server 為原創）
 - 消費解密原版資料：15×13 map grid、TileInfo type（0 ground/1 static/2 box/3 passable）、BomberAttr 角色數值、ItemAttr 掉落權重。
-- TILE=40；爆炸 cell TTL=300ms（`sub_442FF7`）；十字傳播、靜態牆擋、紙箱破壞→權重掉落、連鎖引爆、道具拾取（炸彈/威力/速度/MaxPower/壞道具）、死亡/勝負。
-- Grid-locked 移動（仿 CGOBomber）；`m_nSpeed` 以 px/50ms tick 換算（**interim**，精確 frame timing 待 exe 確認）；炸彈信管 **FUSE_MS=3000 為 interim**（常數尚未在 exe 定位）。
-- 簡單 bot AI：閃避即将爆炸格、相鄰紙箱/敵人時放炸彈後撤退、貪婪 seeking 紙箱/道具。空房自动補 4 人。
-- 20Hz authoritative tick → `gameFrame` snapshot；`gameInput` 帶 seq。
+- TILE=40；十字傳播、靜態牆擋、紙箱破壞→權重掉落、連鎖引爆、道具拾取（炸彈/威力/速度/MaxPower/壞道具）、死亡/勝負。
+- **更新週期已確認為 30ms fixed step**（§8.2）；`m_nSpeed` 以 px/30ms 換算。炸彈信管改用 exe practice/local 路徑的 **2000ms 參考值**（`sub_4E87D8(...,2000)`）；online fuse 由 server 決定，client 僅對 received schedule delta 做 >=1000ms 鉗制（`sub_4E8597`）。
+- 火焰 cell TTL 目前仍用 `EXPLOSION_BASE_MS=300` 作為 **interim** 值；`sub_442FF7` 的 300 已證實是 effect-scheduling base，**不是已證實的 flame lifetime**。真正的 `CGOFlame` 移除時機由 animation count 驅動（`sub_45436D` / `sub_45FE8B`），預設 asset `Flame/Flame` 不在 extracted archives，待補。
+- 簡單 bot AI：閃避即將爆炸格、相鄰紙箱/敵人時放炸彈後撤退、貪婪 seeking 紙箱/道具。空房補到地圖 spawn 數（至少 4、上限 8）；Village00 補 4，Village05 補 8。
+- 30ms authoritative fixed step + catch-up cap 15 → `gameFrame` snapshot；`gameInput` 帶 seq。
 
 ### 7.3 Client GameStage（`src/client/stages/GameStage.ts`）
 - ObjectTable 名稱→asset 路徑映射：`Tile00_Ground/Road00` → `Tile00/Road00`（去掉 `_類別` 後綴）。
-- 畫 ground/object/item/bomb/fire/character（依 y 排序）；方向鍵移動、空白鍵放炸彈；累積 destroyed 格。
-- **爆炸sprite確認**：`Bomb/Fire00` 是藍色水波（彈水阿給＝水炸彈），frame3=40×40 水波 cell，正確。
-- _headless 驗證_：`tools/game_preview.ts` 跑真實 simulation 於 Village00 並用 extracted sprites 合成 frame → 地圖/角色/炸彈/水波/道具皆正確渲染。
-- _WS 煙霧測試_：`tools/smoke_game.ts` login→room→game，Village00，驗證移動/炸彈/爆炸/破壞/道具/勝負 → SMOKE_OK。
+- 原版 JPEG `Game/CAStage` 背景；map viewport origin 由 `sub_4E47B4` 確認：`x=40*(15-width)/2+20`、`y=40*(13-height)/2+41`（15×13 → (20,41)）。地磚用 pivot formula `x-pivotX, y-pivotY+39`，不再把 UI dx/dy 套到地磚。
+- 畫 ground/object/item/bomb/fire/character（依 y 排序）；方向鍵/WASD 移動、空白鍵/Ctrl 放水球；累積 destroyed 格。Characters/bombs/items 使用 logical I16 images；右側 HUD 使用原版 Timer/ItemBox/Portrait/Exit assets。
+- **爆炸 sprite 修正**：`Bomb/Fire00` 是藍色水波，但 raw physical frame 不是 animation cell；它含 100 個 logical images over 53 pages。目前依 age/role 選 logical image（群組映射仍 provisional），預設 `Flame/Flame` 缺失。
+- _headless 驗證_：`tools/ui_preview.ts` 用真實 Login/SelectServer/Lobby/Prepare/GameStage + @napi-rs/canvas 輸出預覽；`tools/game_preview.ts` 為其 legacy entry。GameStage 在 Village00 真實 simulation frame 渲染地圖/角色/水球/水波/道具/HUD。
+- _WS 煙霧測試_：`tools/smoke_game.ts` SMOKE_OK；`tools/smoke_rooms.ts` ROOMS_OK（channel isolation、host/ready enforcement、character/map、start、in-game leave、cleanup）。
 
 ### 7.4 仍待（faithful 還原）
-- 炸彈信管常數、移動 frame timing、爆炸傳播逐格 delay（`sub_442FF7` +75/120/360/200）。
-- SelectServer/Lobby/Prepare 精確 UI 座標；Game HUD/結果畫面；角色動畫幀率；道具完整效果（Punch/Hollow/Roller 等）。
+- 精確 online fuse、flame lifetime/animation table、爆炸傳播逐格 delay；角色動畫幀率；道具完整效果（Punch/Hollow/Roller 等）。
+- UI 細節：channel tab 類別、房間 slot open/close、map preview thumbnails、原版結算完整報表、IME/聊天過濾。
+- WebGPU 實機硬體呈現驗證。已用 transient headless Chromium（playwright-core + @sparticuz/chromium）跑完 login→channel→lobby→create→prepare→start→game→exit，Canvas2D fallback 零 page error；並修复 rAF 之間快速 click 遺失（`Input.clicked` 改由 release flag 決定）與 WebGPU texture upload（改用 256-byte row-aligned `writeTexture`，避免 SwiftShader external ImageBitmap/JPEG reference 失效）。Headless SwiftShader 可取得 adapter 但截圖不可靠，不作為視覺验收。
+
+## 8. 已驗證：logical I16 images、30ms timing、原版 UI 座標（2026-11-08）
+
+### 8.1 I16 logical images vs physical frames（`CDataI16::sub_678590`）
+容器有兩個計數：`nImages`（48-byte headers）與 `nFrames`（RLE texture pages）。 exe 的 image accessors（`sub_599242/599253/599268/59927D/59928D/59929E/5992D0`）證實 header 欄位：
+```
++0 dx, +4 dy, +8 delay/key, +12 frameIndex,
++16 sx, +20 sy, +24 ex, +28 ey, +32 w, +36 h, +40 pivotX, +44 pivotY
+source rect = (sx, sy, ex-sx, ey-sy) inside frames[frameIndex]
+```
+範例（已寫入 `build/manifest.json` 的 `images`）：
+- `Lobby/LB_Bt_T_Create`: 9 logical / 1 physical，133×63 狀態。
+- `Prepare/PRE_Bt_Start`: 6 / 1，193×57。
+- `SelectServerStage/CH_Bt_Channel`: 4 / 2；normal/pressed/disabled 共用 161×52 page（dx/dy=-3），hover 是 167×58 第二 page。
+- `Lobby/LB_Bt_SessionSlot`: 4 / 2（272×81 + hover 279×89）。
+- `Bomb/Fire00`: 100 / 53；`Character/C00-WalkDown_ALayerStatic`: 5 / 5（dy≈42, pivot 8,66）。
+- `Prepare/PRE_Img`: 22 / 8（準備/室長 badges、check marks、mode icons）；`PRE_Ability`: 29 / 4；`Game/ItemCount`: 15 / 3；`Game/GameStageItem`: 27 / 2。
+管線：`tools/i16.ts` 保留 headers；`tools/asset-pipeline.ts` 輸出 `images`；`engine/assets.ts` 的 `logicalImage()/imageCount()` 解析 source rect；`ui/controls.ts` Button 與 GameStage 动画改用 logical images。空 0×0 animation layer 輸出 1×1 transparent PNG（保留 0×0 rect），避免 ImageBitmap 拒絕零尺寸。
+
+### 8.2 30ms fixed step（已證實）
+- `CPrepareStage::sub_4D2048` 與 `CGameStage::sub_4F5658` 用 `timeGetTime` delta 除以 `0x1E`（30），catch-up 上限 15 updates。
+- Server `GameServer.startSimulation` 用 `FixedStepper`（`src/shared/timing.ts`）在 30ms interval callback 內補幀；client stage update 改用 ms，GameStage input send threshold=30ms。
+- 移動 `m_nSpeed` 是 pixels per 30ms update；已移除 interim `speed * dt / 50`。
+- Practice/local explosion scheduling：`sub_4E87D8(..., 2000)`；client `sub_4E8597` 對 received delta 鉗制 >=1000。這支持 **2000ms practice fuse 參考**，但 online fuse 仍 server-authoritative。
+- `sub_442FF7` 的 300 经 `sub_4E8968` → packet 108（`sub_4E8DC1`）消費，是 effect-scheduling base；**不得標為已證實 fire TTL**。`CGOFlame::sub_45436D` 在 frame counter >= `sub_45FE8B` animation count 時移除 segment；exact lifetime 待 animation table/預設 Flame asset。
+
+### 8.3 原版 UI 座標（已提取並實作）
+- SelectServer/channel（`sub_56DBA5/56D34E`）：tab (401,63)；arrows (490,508)/(676,508)；page buttons x=521+30i,y=511；10 channels/page x=428/595,y=218+56·floor(i/2)。Server 提供 5 pages×10 channels。
+- Lobby（`sub_4C99DC/4C6D83/4C70F0`）：room slots x=214/490,y=121/205/289；room-info (+242,+49)；create/quick NM/MM (214/306/404/496,59)；ShowAll (595,66)、Practice (685,66)；room-page arrows (431/494,376)。Create dialog 使用 `Dlg_LB-NMCreate` + `Etc/BtOk/BtCancel`。
+- Prepare（`sub_4D7376/4DB16C`）：8 slots x=27/133/239/345,y=94/239；Ready/Start (512,494)；AutoReady (719,525)；Selectmap (646,428)；Roominfo (344,61)。Character buttons 用 `Etc/SelCharaXX`（缺的以 `PRE_SelChara` 補）；map dialog 用 `Dlg_PRE-SelMap`。
+- Game（`sub_4F5FDC/4E47B4`）：map origin 公式见 §7.3；Exit (647,561)；Timer digits 在右側 sidebar；ItemBox01 (647,466)。結果用 `Game/Win/Lose/Draw` + `Etc/BtOk`，Enter/OK 送 `returnToRoom` 回準備階段。
+
+### 8.4 Server lifecycle（原創，語意對照 client）
+已補：server/channel 隔離、`selectChannel`、mapList、duplicate nickname 拒絕、host/ready/start 驗證、create/join/leave、host transfer、in-game leave eliminate、character/map selection、post-game `returnToRoom`、bot fill 到 map spawn count（4–8）。gameEnd 後 room 進入封閉的 `results` 狀態；每位玩家保留自己的結算畫面，按 Enter/OK 後個別回準備階段（尚未全員返回前禁用開始/選圖/加入），全員返回或離開後才重設 ready 並開放房間。`tests/serverLifecycle.test.ts` 用 fake timer/socket 直接驗證此 round-trip。

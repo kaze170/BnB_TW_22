@@ -95,6 +95,8 @@ class WebGPURenderer implements Renderer {
   private bindLayout!: GPUBindGroupLayout;
   private vertexBuffer!: GPUBuffer;
   private texCache = new Map<string, { tex: GPUTexture; bind: GPUBindGroup; w: number; h: number }>();
+  private uploadCanvas: HTMLCanvasElement | null = null;
+  private uploadCtx: CanvasRenderingContext2D | null = null;
   private verts = new Float32Array(MAX_QUADS * VERTS_PER_QUAD * FLOATS_PER_VERTEX);
   private quadCount = 0;
   private curTex: string | null = null;
@@ -162,6 +164,19 @@ class WebGPURenderer implements Renderer {
     return r;
   }
 
+  private readPixels(source: CanvasImageSource, w: number, h: number): Uint8ClampedArray {
+    if (!this.uploadCanvas) {
+      this.uploadCanvas = document.createElement("canvas");
+      this.uploadCtx = this.uploadCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    if (!this.uploadCtx) throw new Error("no 2d context for texture upload");
+    if (this.uploadCanvas!.width !== w) this.uploadCanvas!.width = w;
+    if (this.uploadCanvas!.height !== h) this.uploadCanvas!.height = h;
+    this.uploadCtx.clearRect(0, 0, w, h);
+    this.uploadCtx.drawImage(source, 0, 0);
+    return this.uploadCtx.getImageData(0, 0, w, h).data;
+  }
+
   private texture(sprite: Sprite) {
     let e = this.texCache.get(sprite.url);
     if (!e) {
@@ -170,10 +185,20 @@ class WebGPURenderer implements Renderer {
         format: "rgba8unorm",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
       });
-      this.device.queue.copyExternalImageToTexture({ source: sprite.bitmap }, { texture: tex }, [
-        sprite.bitmap.width,
-        sprite.bitmap.height,
-      ]);
+      const w = sprite.bitmap.width, h = sprite.bitmap.height;
+      try {
+        // Upload via writeTexture instead of copyExternalImageToTexture: some
+        // adapters (notably headless SwiftShader) drop external ImageBitmap/JPEG
+        // references after a few copies. Bitmap-font sprites are sync canvases,
+        // so a single 2D readback path covers both assets and text reliably.
+        const pixels = this.readPixels(sprite.bitmap as unknown as CanvasImageSource, w, h);
+        const bytesPerRow = Math.ceil(w * 4 / 256) * 256;
+        const padded = new Uint8Array(bytesPerRow * h);
+        for (let y = 0; y < h; y++) padded.set(pixels.subarray(y * w * 4, (y + 1) * w * 4), y * bytesPerRow);
+        this.device.queue.writeTexture({ texture: tex }, padded, { bytesPerRow, rowsPerImage: h }, [w, h]);
+      } catch (e) {
+        throw new Error(`WebGPU texture upload failed for ${sprite.url} (${w}x${h}): ${(e as Error).message}`);
+      }
       const bind = this.device.createBindGroup({
         layout: this.bindLayout,
         entries: [

@@ -13,7 +13,6 @@ export class Input {
   x = 0;
   y = 0;
   down = false;
-  private wasDown = false;
   private pressedFlag = false;
   private releasedFlag = false;
   keys = new Set<string>();
@@ -57,13 +56,14 @@ export class Input {
       y: this.y,
       down: this.down,
       pressed: this.pressedFlag,
-      clicked: this.releasedFlag && this.wasDown,
+      // A fast click can press+release between two rAF ticks; the release flag
+      // alone is authoritative (mouseup is only recorded after a canvas down).
+      clicked: this.releasedFlag,
     };
     return p;
   }
 
   endFrame() {
-    this.wasDown = this.down;
     this.pressedFlag = false;
     this.releasedFlag = false;
     this.typed = "";

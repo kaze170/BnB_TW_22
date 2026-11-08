@@ -53,9 +53,11 @@ async function boot() {
 
   let last = performance.now();
   function frame(now: number) {
-    const dt = Math.min(0.05, (now - last) / 1000);
+    // Stages use milliseconds (CA.exe timeGetTime domain). Clamp tab-switch gaps;
+    // GameStage applies the original 30ms fixed-step accumulator internally.
+    const dtMs = Math.min(500, now - last);
     last = now;
-    stages.update(dt);
+    stages.update(dtMs);
     stages.draw();
     requestAnimationFrame(frame);
   }

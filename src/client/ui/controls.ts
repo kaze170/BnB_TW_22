@@ -4,7 +4,7 @@
  *         CCtrlButton::sub_6A43F0: normal=0, press=1, disabled=2, hover=3+).
  * Edit:   CCtrlEdit single-line input drawn over the form's baked input box.
  */
-import type { Sprite } from "../engine/assets.ts";
+import { imageCount, logicalImage, type Sprite } from "../engine/assets.ts";
 import type { Renderer } from "../engine/renderer.ts";
 import type { Input, Pointer } from "../engine/input.ts";
 import { rectContains, type Rect } from "../engine/types.ts";
@@ -15,13 +15,16 @@ export class Button {
   y: number;
   w: number;
   h: number;
-  state = 0; // 0 normal, 1 press, 2 disabled, 3 hover
+  state = 0; // CCtrlButton::sub_6A43F0: normal=0, press=1, disabled=2, hover=3+
   enabled = true;
   visible = true;
   onClick?: () => void;
-  private frameH: number;
+  /** Optional forced logical image (e.g. selected character / checked box). */
+  stateOverride: number | null = null;
   private stateCount: number;
   private over = false;
+  private baseDx = 0;
+  private baseDy = 0;
 
   constructor(
     public sprite: Sprite,
@@ -31,26 +34,30 @@ export class Button {
   ) {
     this.x = x;
     this.y = y;
-    this.stateCount = opts.stateCount ?? sprite.frames.length;
-    // single-frame sprite whose height stacks N states vertically
-    this.frameH = sprite.frames.length === 1 ? sprite.h / this.stateCount : sprite.frames[0]!.h;
-    this.w = sprite.frames.length === 1 ? sprite.w : sprite.frames[0]!.w;
-    this.h = this.frameH;
+    this.stateCount = opts.stateCount ?? imageCount(sprite);
+    const first = logicalImage(sprite, 0);
+    this.w = first?.w ?? sprite.w;
+    this.h = first?.h ?? sprite.h;
+    this.baseDx = first?.dx ?? 0;
+    this.baseDy = first?.dy ?? 0;
     this.onClick = opts.onClick;
   }
 
   get rect(): Rect {
-    return { x: this.x, y: this.y, w: this.w, h: this.h };
+    // The logical canvas (w/h) is anchored at x+dx0,y+dy0; hover art may grow
+    // beyond the normal source rect, so hit-testing uses the full canvas.
+    return { x: this.x + this.baseDx, y: this.y + this.baseDy, w: this.w, h: this.h };
   }
 
   update(p: Pointer) {
     if (!this.visible) return;
     this.over = rectContains(this.rect, p.x, p.y);
     if (!this.enabled) {
-      this.state = 2;
+      this.state = Math.min(2, this.stateCount - 1);
       return;
     }
-    if (this.over && p.down) this.state = 1;
+    if (this.stateOverride != null) this.state = Math.min(this.stateOverride, this.stateCount - 1);
+    else if (this.over && p.down) this.state = Math.min(1, this.stateCount - 1);
     else if (this.over) this.state = Math.min(3, this.stateCount - 1);
     else this.state = 0;
     if (this.over && p.clicked) this.onClick?.();
@@ -58,11 +65,9 @@ export class Button {
 
   draw(r: Renderer) {
     if (!this.visible) return;
-    const src =
-      this.sprite.frames.length === 1
-        ? { x: 0, y: this.state * this.frameH, w: this.w, h: this.frameH }
-        : this.sprite.frames[this.state] ?? this.sprite.frames[0]!;
-    r.draw(this.sprite, this.rect, { src });
+    const img = logicalImage(this.sprite, this.state) ?? logicalImage(this.sprite, 0);
+    if (!img) return;
+    r.draw(this.sprite, { x: this.x + img.dx, y: this.y + img.dy, w: img.src.w, h: img.src.h }, { src: img.src });
   }
 }
 
@@ -88,7 +93,7 @@ export class Edit {
     return { x: this.x, y: this.y, w: this.w, h: this.h };
   }
 
-  update(p: Pointer, input: Input, dt: number) {
+  update(p: Pointer, input: Input, dtMs: number) {
     if (!this.visible) return;
     if (p.pressed) this.focused = rectContains(this.rect, p.x, p.y);
     if (this.focused) {
@@ -97,8 +102,8 @@ export class Edit {
         else if (this.value.length < this.maxLength) this.value += ch;
       }
       if (input.justPressed("Enter")) this.onSubmit?.();
-      this.caretTimer += dt;
-      if (this.caretTimer > 0.5) {
+      this.caretTimer += dtMs;
+      if (this.caretTimer > 500) {
         this.caretTimer = 0;
         this.caretOn = !this.caretOn;
       }

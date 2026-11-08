@@ -14,7 +14,10 @@ export type C2S =
   | { t: "createRoom"; title: string; map: number; mode: number }
   | { t: "joinRoom"; room: number }
   | { t: "leaveRoom" }
+  | { t: "returnToRoom" }
   | { t: "ready"; ready: boolean }
+  | { t: "selectCharacter"; character: number }
+  | { t: "setMap"; map: number }
   | { t: "startGame" }
   | { t: "gameInput"; seq: number; dx: number; dy: number; bomb: boolean }
   | { t: "ping"; time: number };
@@ -24,6 +27,7 @@ export type S2C =
   | { t: "serverList"; servers: ServerInfo[] }
   | { t: "channelList"; channels: ChannelInfo[] }
   | { t: "lobbyState"; rooms: RoomInfo[]; users: number }
+  | { t: "mapList"; names: string[]; groups: Array<{ name: string; maps: string[] }> }
   | { t: "chat"; from: string; text: string }
   | { t: "roomState"; room: RoomState }
   | { t: "gameStart"; state: GameInitState }
@@ -56,7 +60,8 @@ export interface RoomInfo {
   mode: number;
   players: number;
   max: number;
-  state: "waiting" | "playing";
+  /** results: match finished, waiting for players to acknowledge returnToRoom */
+  state: "waiting" | "playing" | "results";
 }
 export interface RoomPlayer {
   id: string;
@@ -73,6 +78,8 @@ export interface RoomState {
   mode: number;
   players: RoomPlayer[];
   max: number;
+  hostId: string;
+  state: "waiting" | "playing" | "results";
 }
 
 /** Gameplay snapshot types — map/character/item data are the decrypted originals
@@ -126,6 +133,12 @@ export interface ExplosionState {
   x: number;
   y: number;
   ttl: number;
+  /** ms since this cell ignited (for original animation phase selection) */
+  age?: number;
+  /** center / arm / tip, used to pick the directional fire artwork */
+  role?: "center" | "arm" | "tip";
+  /** 0 down, 1 up, 2 left, 3 right (arm/tip direction from bomb center) */
+  dir?: number;
 }
 export interface ItemState {
   id: number;
@@ -135,6 +148,8 @@ export interface ItemState {
 }
 export interface GameSnapshot {
   frame: number;
+  /** elapsed match time in ms (frame * 30ms fixed step) */
+  timeMs?: number;
   bombers: BomberState[];
   bombs: BombState[];
   explosions: ExplosionState[];

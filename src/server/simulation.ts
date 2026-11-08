@@ -2,14 +2,16 @@
  * Game simulation for the vertical slice. The SERVER is original (project
  * decision), but it consumes the decrypted ORIGINAL data: 15x13 maps, tile
  * types, character stats, item drop weights. Core constants recovered from
- * CA.exe: TILE=40, explosion cell TTL=300ms (sub_442FF7). Movement is grid-locked
- * like CGOBomber; bomb fuse is interim 3000ms pending exact exe confirmation.
+ * CA.exe: TILE=40, fixed update step=30ms (CGameStage::sub_4F5658), practice
+ * fuse=2000ms (sub_4E87D8). Movement is grid-locked like CGOBomber; fire-cell
+ * TTL currently uses the 300ms effect-scheduling base as an interim value.
  */
 import type { GameInitState, GameSnapshot, MapCell, BomberState } from "../shared/protocol.ts";
 import {
   MAPS, ITEMS, TILE, EXPLOSION_MS, FUSE_MS, MAP_NAMES,
   tileName, tileType, charStats, rollItem, itemType,
 } from "./gameData.ts";
+import { ORIGINAL_TICK_MS } from "../shared/timing.ts";
 
 export interface SimPlayer {
   id: string; slot: number; character: number; bot: boolean;
@@ -27,7 +29,7 @@ export interface SimPlayer {
   aiTimer: number;
 }
 interface Bomb { id: number; x: number; y: number; owner: string; timer: number; power: number; }
-interface Fire { x: number; y: number; ttl: number; }
+interface Fire { x: number; y: number; ttl: number; age: number; role: "center" | "arm" | "tip"; dir: number; }
 interface Item { id: number; x: number; y: number; item: string; asset: string; }
 
 const DIRS = [[0, 1], [0, -1], [-1, 0], [1, 0]]; // down, up, left, right
@@ -95,6 +97,15 @@ export class GameSimulation {
     if (b && !b.bot) b.input = { dx: Math.sign(dx), dy: Math.sign(dy), bomb };
   }
 
+  /** A disconnect/leave eliminates the bomber but keeps the match authoritative. */
+  removePlayer(id: string) {
+    const b = this.bombers.find((x) => x.id === id);
+    if (b) {
+      b.alive = false;
+      b.input = { dx: 0, dy: 0, bomb: false };
+    }
+  }
+
   private idx(x: number, y: number) { return y * this.width + x; }
   private inBounds(x: number, y: number) { return x >= 0 && y >= 0 && x < this.width && y < this.height; }
   private walkable(x: number, y: number, who?: SimPlayer): boolean {
@@ -133,7 +144,7 @@ export class GameSimulation {
     for (const b of this.bombers) {
       if (b.alive && this.fireAt(b.tx, b.ty)) b.alive = false;
     }
-    for (const f of this.fires) f.ttl -= dtMs;
+    for (const f of this.fires) { f.ttl -= dtMs; f.age += dtMs; }
     this.fires = this.fires.filter((f) => f.ttl > 0);
     // win check
     const alive = this.bombers.filter((b) => b.alive);
@@ -145,7 +156,8 @@ export class GameSimulation {
   }
 
   private move(b: SimPlayer, dtMs: number) {
-    const step = b.speed * (dtMs / 50); // m_nSpeed pixels per 50ms tick (interim scaling)
+    // m_nSpeed is pixels per original 30ms fixed update (CGameStage::sub_4F5658).
+    const step = b.speed * (dtMs / ORIGINAL_TICK_MS);
     if (b.moving) {
       const tx = b.gx * TILE, ty = b.gy * TILE;
       const dx = tx - b.x, dy = ty - b.y;
@@ -183,14 +195,18 @@ export class GameSimulation {
 
   private explode(bomb: Bomb) {
     this.bombs = this.bombs.filter((b) => b.id !== bomb.id);
-    const cells: Array<[number, number]> = [[bomb.x, bomb.y]];
-    for (const [dx, dy] of DIRS) {
+    const cells: Array<{ x: number; y: number; role: Fire["role"]; dir: number }> = [
+      { x: bomb.x, y: bomb.y, role: "center", dir: 0 },
+    ];
+    for (let dir = 0; dir < DIRS.length; dir++) {
+      const [dx, dy] = DIRS[dir]!;
       for (let i = 1; i <= bomb.power; i++) {
         const x = bomb.x + dx! * i, y = bomb.y + dy! * i;
         if (!this.inBounds(x, y)) break;
         const cell = this.cells[this.idx(x, y)]!;
         if (cell.kind === 1) break; // static wall stops fire
-        cells.push([x, y]);
+        const isTip = i === bomb.power;
+        cells.push({ x, y, role: cell.kind === 2 || isTip ? "tip" : "arm", dir });
         if (cell.kind === 2) { // box: destroy, drop item, stop
           cell.kind = 0; cell.object = null;
           this.destroyed.push(this.idx(x, y));
@@ -202,10 +218,10 @@ export class GameSimulation {
         if (other) { other.timer = 0; } // chain reaction
       }
     }
-    for (const [x, y] of cells) {
-      const existing = this.fires.find((f) => f.x === x && f.y === y);
-      if (existing) existing.ttl = EXPLOSION_MS;
-      else this.fires.push({ x, y, ttl: EXPLOSION_MS });
+    for (const c of cells) {
+      const existing = this.fires.find((f) => f.x === c.x && f.y === c.y);
+      if (existing) { existing.ttl = EXPLOSION_MS; existing.age = 0; existing.role = c.role; existing.dir = c.dir; }
+      else this.fires.push({ x: c.x, y: c.y, ttl: EXPLOSION_MS, age: 0, role: c.role, dir: c.dir });
       // items burn? original keeps items; we keep them.
     }
     // chain bombs whose timer hit 0 explode next tick (timer<=0 handled above already this tick;
@@ -300,9 +316,10 @@ export class GameSimulation {
     }));
     return {
       frame: this.frame,
+      timeMs: this.frame * ORIGINAL_TICK_MS,
       bombers,
       bombs: this.bombs.map((b) => ({ id: b.id, x: b.x, y: b.y, owner: b.owner, timer: b.timer, power: b.power })),
-      explosions: this.fires.map((f) => ({ x: f.x, y: f.y, ttl: f.ttl })),
+      explosions: this.fires.map((f) => ({ x: f.x, y: f.y, ttl: f.ttl, age: f.age, role: f.role, dir: f.dir })),
       items: this.items.map((i) => ({ id: i.id, x: i.x, y: i.y, item: i.asset })),
       destroyed: this.destroyed,
     };

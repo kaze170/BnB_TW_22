@@ -9,7 +9,9 @@
     "start": "bun run src/server/index.ts",
     "assets": "bun run tools/asset-pipeline.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test"
+    "test": "bun test",
+    "smoke": "bun run tools/smoke_rooms.ts && bun run tools/smoke_game.ts",
+    "preview": "bun run tools/ui_preview.ts"
   },
   "devDependencies": {
     "@napi-rs/canvas": "^1.1.0",

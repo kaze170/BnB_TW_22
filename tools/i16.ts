@@ -20,8 +20,28 @@ export interface I16Frame {
   rgba: Uint8Array;
 }
 
+/** Logical image header (48 bytes) from CDataI16::sub_678590.
+ * The exe draws logical images, not raw decoded frames: several logical images
+ * can share one packed frame, with their own source rect and draw offset. */
+export interface I16ImageInfo {
+  dx: number;
+  dy: number;
+  /** header dword 2: per-image delay/colour key (-1 for most UI) */
+  delay: number;
+  frame: number;
+  sx: number;
+  sy: number;
+  ex: number;
+  ey: number;
+  w: number;
+  h: number;
+  pivotX: number;
+  pivotY: number;
+}
+
 export interface I16Image {
   frames: I16Frame[];
+  images: I16ImageInfo[];
 }
 
 export function isI16Image(d: Uint8Array): boolean {
@@ -44,7 +64,27 @@ export function decodeI16(d: Uint8Array): I16Image {
     off += 8;
     frames.push([a, b]);
   }
-  // image headers: nImages × 48 bytes (skipped; layout metadata used by exe layers)
+  // image headers: nImages × 48 bytes. Keep the layout metadata; the original
+  // renderer addresses these logical images (button states, packed glyph cells,
+  // animation phases), while `frames` are only the decoded texture pages.
+  const images: I16ImageInfo[] = [];
+  for (let i = 0; i < nImages; i++) {
+    const base = off + i * 48;
+    images.push({
+      dx: dv.getInt32(base, true),
+      dy: dv.getInt32(base + 4, true),
+      delay: dv.getInt32(base + 8, true),
+      frame: dv.getInt32(base + 12, true),
+      sx: dv.getInt32(base + 16, true),
+      sy: dv.getInt32(base + 20, true),
+      ex: dv.getInt32(base + 24, true),
+      ey: dv.getInt32(base + 28, true),
+      w: dv.getInt32(base + 32, true),
+      h: dv.getInt32(base + 36, true),
+      pivotX: dv.getInt32(base + 40, true),
+      pivotY: dv.getInt32(base + 44, true),
+    });
+  }
   off += nImages * 48;
   const out: I16Frame[] = [];
   for (let k = 0; k < nFrames; k++) {
@@ -57,7 +97,7 @@ export function decodeI16(d: Uint8Array): I16Image {
     const height = a;
     out.push({ width, height, rgba: decodeRLE(block, width * height) });
   }
-  return { frames: out };
+  return { frames: out, images };
 }
 
 function decodeRLE(block: Uint8Array, total: number): Uint8Array {

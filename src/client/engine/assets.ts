@@ -5,12 +5,29 @@
  */
 import type { Rect } from "./types.ts";
 
+/** Logical I16 image header (see tools/i16.ts / CDataI16::sub_678590). */
+export interface ImageInfo {
+  dx: number;
+  dy: number;
+  delay: number;
+  frame: number;
+  sx: number;
+  sy: number;
+  ex: number;
+  ey: number;
+  w: number;
+  h: number;
+  pivotX: number;
+  pivotY: number;
+}
+
 export interface SpriteEntry {
   kind: "sprite";
   url: string;
   w: number;
   h: number;
   frames: Rect[];
+  images?: ImageInfo[];
 }
 export interface MediaEntry {
   kind: "image" | "audio" | "data";
@@ -26,7 +43,31 @@ export interface Sprite {
   w: number;
   h: number;
   frames: Rect[];
+  images?: ImageInfo[];
   bitmap: ImageBitmap;
+}
+
+/** Resolve a logical image index to a source rect inside the decoded strip. */
+export function logicalImage(spr: Sprite, index: number): { src: Rect; dx: number; dy: number; w: number; h: number } | null {
+  const info = spr.images?.[index];
+  if (info) {
+    const page = spr.frames[info.frame];
+    if (!page) return null;
+    return {
+      src: { x: page.x + info.sx, y: page.y + info.sy, w: info.ex - info.sx, h: info.ey - info.sy },
+      dx: info.dx,
+      dy: info.dy,
+      w: info.w,
+      h: info.h,
+    };
+  }
+  const fr = spr.frames[index];
+  if (!fr) return null;
+  return { src: fr, dx: 0, dy: 0, w: fr.w, h: fr.h };
+}
+
+export function imageCount(spr: Sprite): number {
+  return spr.images?.length ?? spr.frames.length;
 }
 
 export class Assets {
@@ -75,8 +116,9 @@ export class Assets {
     if (!key) return undefined;
     const e = this.manifest[key]!;
     let url: string, w: number, h: number, frames: Rect[];
+    let images: ImageInfo[] | undefined;
     if (e.kind === "sprite") {
-      url = e.url; w = e.w; h = e.h; frames = e.frames;
+      url = e.url; w = e.w; h = e.h; frames = e.frames; images = e.images;
     } else if (e.kind === "image") {
       url = e.url; w = 0; h = 0; frames = [];
     } else {
@@ -87,7 +129,7 @@ export class Assets {
       w = bitmap.width; h = bitmap.height;
       frames = [{ x: 0, y: 0, w, h }];
     }
-    const spr: Sprite = { name, url, w, h, frames, bitmap };
+    const spr: Sprite = { name, url, w, h, frames, bitmap, ...(images ? { images } : {}) };
     this.sprites.set(name, spr);
     return spr;
   }

@@ -10,7 +10,7 @@
  */
 import { readdir, mkdir } from "node:fs/promises";
 import { join, relative, dirname, extname } from "node:path";
-import { decodeI16, isI16Image } from "./i16.ts";
+import { decodeI16, isI16Image, type I16ImageInfo } from "./i16.ts";
 import { encodePNG } from "./png.ts";
 
 const ROOT = join(import.meta.dir, "..");
@@ -22,7 +22,10 @@ interface SpriteEntry {
   url: string;
   w: number;
   h: number;
+  /** decoded texture pages (vertical strip) */
   frames: Array<{ x: number; y: number; w: number; h: number }>;
+  /** logical images addressed by CA.exe (button states / packed cells / phases) */
+  images?: I16ImageInfo[];
 }
 interface MediaEntry {
   kind: "image" | "audio" | "data";
@@ -44,10 +47,16 @@ async function walk(dir: string): Promise<string[]> {
   return files;
 }
 
-async function emitSprite(logical: string, frames: Array<{ width: number; height: number; rgba: Uint8Array }>) {
+async function emitSprite(
+  logical: string,
+  frames: Array<{ width: number; height: number; rgba: Uint8Array }>,
+  images?: I16ImageInfo[],
+) {
   // vertical strip; frame widths may differ -> sheet width = max width
-  const sheetW = Math.max(...frames.map((f) => f.width));
-  const sheetH = frames.reduce((s, f) => s + f.height, 0);
+  // Some original animation layers are empty (0x0). PNG/ImageBitmap reject zero
+  // dimensions, so emit a 1x1 transparent page while preserving the 0x0 rects.
+  const sheetW = Math.max(1, ...frames.map((f) => f.width));
+  const sheetH = Math.max(1, frames.reduce((s, f) => s + f.height, 0));
   const sheet = new Uint8Array(sheetW * sheetH * 4);
   const rects: Array<{ x: number; y: number; w: number; h: number }> = [];
   let y = 0;
@@ -61,7 +70,7 @@ async function emitSprite(logical: string, frames: Array<{ width: number; height
   const url = `assets/${logical}.png`;
   await mkdir(dirname(join(OUT, "..", url)), { recursive: true });
   await Bun.write(join(OUT, "..", url), encodePNG(sheetW, sheetH, sheet));
-  manifest[logical] = { kind: "sprite", url, w: sheetW, h: sheetH, frames: rects };
+  manifest[logical] = { kind: "sprite", url, w: sheetW, h: sheetH, frames: rects, ...(images ? { images } : {}) };
   nSprite++;
   nFrames += frames.length;
 }
@@ -80,7 +89,7 @@ async function main() {
       if (isI16Image(bytes)) {
         try {
           const img = decodeI16(bytes);
-          await emitSprite(logical, img.frames);
+          await emitSprite(logical, img.frames, img.images);
         } catch (e) {
           console.error(`  ! decode failed ${rel}: ${(e as Error).message}`);
         }

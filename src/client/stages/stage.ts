@@ -17,7 +17,8 @@ export abstract class Stage {
   /** Load assets / initialise controls (async). */
   async enter(_params?: Record<string, unknown>): Promise<void> {}
   exit(): void {}
-  abstract update(dt: number): void;
+  /** dtMs: elapsed milliseconds (CA.exe timeGetTime domain). */
+  abstract update(dtMs: number): void;
   abstract draw(): void;
 }
 
@@ -49,8 +50,8 @@ export class StageManager {
     console.log(`[stage] -> ${name}`);
   }
 
-  update(dt: number) {
-    this.current?.update(dt);
+  update(dtMs: number) {
+    this.current?.update(dtMs);
   }
   draw() {
     this.current?.draw();
