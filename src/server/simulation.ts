@@ -16,7 +16,7 @@ import {
 } from "./gameData.ts";
 import { ORIGINAL_TICK_MS } from "../shared/timing.ts";
 import {
-  FLAME_OBJECT, animationGroup, flameCenterGroup, flameArmGroup,
+  FLAME_OBJECT, BUBBLE_OBJECT, BUBBLE_EXPKILL_GROUP, animationGroup, flameCenterGroup, flameArmGroup,
   characterActionGroup, characterActionLoops, animationImageAtTicks,
   type CharacterAction,
 } from "../shared/animations.ts";
@@ -506,12 +506,17 @@ export class GameSimulation {
       const groupIndex = characterActionGroup(b.action, b.dir);
       const group = b.action === "hidden" ? undefined : animationGroup(object, groupIndex);
       const loop = characterActionLoops(b.action);
+      const bubbleGroup = animationGroup(BUBBLE_OBJECT, BUBBLE_EXPKILL_GROUP);
+      const bubbleTicks = bubbleGroup?.frames.reduce((sum, [, duration]) => sum + Math.max(0, duration), 0) ?? 0;
+      const bubble = b.action === "die" && bubbleGroup && b.actionTicks < bubbleTicks
+        ? { asset: bubbleGroup.asset, group: BUBBLE_EXPKILL_GROUP, frame: animationImageAtTicks(bubbleGroup, b.actionTicks, false) }
+        : undefined;
       return {
         id: b.id, x: b.x, y: b.y, dir: b.dir, alive: b.alive,
         speed: b.speed, bombCount: b.bombCount, power: b.power, bot: b.bot, moving: b.moving,
         action: b.action, animGroup: group ? groupIndex : undefined, animTicks: b.actionTicks,
         animFrame: group ? animationImageAtTicks(group, b.actionTicks, loop) : undefined,
-        animAsset: group?.asset,
+        animAsset: group?.asset, bubble,
       };
     });
     const explosions = this.fires.flatMap((cell) => {

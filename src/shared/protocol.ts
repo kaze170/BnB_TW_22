@@ -134,6 +134,8 @@ export interface BomberState {
   animTicks?: number;
   /** ObjectTable asset for the current action, e.g. Character/C00-Throw_A. */
   animAsset?: string;
+  /** Separate ObjectTable effect over the character, when active. */
+  bubble?: { asset: string; group: number; frame: number };
 }
 export interface BombState {
   id: number;

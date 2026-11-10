@@ -228,3 +228,10 @@ source rect = (sx, sy, ex-sx, ey-sy) inside frames[frameIndex]
 - **驗證**：`tests/characterActions.test.ts` 驗證 group、duration、放球轉場、火焰直接進 Die、預設隱藏／ghost flag 分支、Faint counter 及賽後動作／時鐘凍結；`tools/character_preview.ts` 輸出 `build/character_action_preview.png`。Start 僅有 group 定義，目前不在開場自動播放；Release 和 GhostDisappear 尚未接上 gameplay。
 
 - **整合驗證**：`tools/ui_preview.ts` 使用真實 GameStage 及 simulation，驗證終局 snapshot → gameEnd → Die → hidden → 結算畫面，並輸出 `build/game_death_preview.png` / `build/game_death_result_preview.png`；`tests/serverLifecycle.test.ts` 驗證最後 presentation frame 與計時器清理。
+
+### 8.8 Bubble 動畫與 Throw 方向修正（2026-11-08）
+- **原版 Bubble 物件**：`sub_44CAC6` 初始化 `Bomb/Bubble`；`CGOBomber::sub_44A0C8` 的 objdump `0x44A13B–0x44A156` 設角色 group 1 並以角色座標呼叫 `sub_443EF5`、Bubble group **2**。`CGOBomber::sub_44F0E7` 先畫角色再畫可見 Bubble；Die 的 `sub_4503B5` 在 Bubble 播完後隱藏它。`Bomb/Bubble` 的 group 2 `ExpKill` 是 `Bomb/Bubble00` 的 `(3,4),(4,4),(5,4)`，合計 **12 ticks = 360ms**；server snapshot 的 `bubble` 帶 group/frame/asset，GameStage 按角色排序畫在角色之後，使用 logical image 的 pivot 定位。角色與 Bubble 的相對座標在 Web 渲染中的精確像素對位仍待原版畫面比對。
+- **尚未實作的受困／救援**：`sub_44DA8F` 的 objdump `0x44DC8B` 設角色 group **56**，並呼叫 `sub_443EF5` 設 Bubble group **0**；`sub_44A18B` 設角色 group **26** 與 Bubble group **1**。Bubble group 0 `Lock` 為 `(0,4),(1,4),(2,4),(6,-1)`，group 1 `ExpLive` 為 `(6,4),(7,4),(8,4)`。此處僅確認素材與 client 轉場，尚未確認完整受困／救援觸發與線上 server 時序；未新增救援、復活或計分規則。死亡演出後才出現報表的寬限期仍是 server 原創。
+- **Hold 修正**：`CGameObjectTemplate::sub_45F608` 對 duration `-1` 不推進；`animationImageAtTicks` 遇含 hold 的 group 不先 modulo，避免 `Lock` 的最終 frame 6 無法出現。
+- **方向修正**：先前將 Throw 向下與向右對調；實際 `Character/C00_A` 等全部 C00–C10 的 ObjectTable 名稱是 16 Left、17 Up、18 Right、19 Down。因此 simulation 方向 down/up/left/right 對應 `[19,17,16,18]`；測試逐一核對 11 角色的 Throw/Walk/Stop/Ghost Stop 群組名稱。
+- **驗證**：`tests/characterActions.test.ts` 涵蓋 ExpKill 每 4 ticks 的 frame 和結束、Lock 的 -1 hold、所有角色方向對照；`tools/ui_preview.ts` 輸出實際 GameStage 的 `build/game_death_preview.png` 並驗證賽後畫面轉場。

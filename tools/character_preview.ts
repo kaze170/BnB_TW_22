@@ -22,7 +22,7 @@ const realFetch = globalThis.fetch;
 const assets = new Assets();
 await assets.loadManifest();
 const rows = [
-  { label: "Throw Down (18)", group: 18 },
+  { label: "Throw Down (19)", group: 19 },
   { label: "Faint (2)", group: 2 },
   { label: "Die (1)", group: 1 },
   { label: "Ghost Appear (43)", group: 43 },

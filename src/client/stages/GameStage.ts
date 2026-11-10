@@ -45,6 +45,7 @@ export class GameStage extends Stage {
   private charActions = new Map<string, Sprite>();
   private portraits = new Map<number, Sprite>();
   private bomb: Sprite | null = null;
+  private bubble: Sprite | null = null;
   private fireSprites = new Map<string, Sprite>();
   private fireRequests = new Set<string>();
   private itemSprites = new Map<string, Sprite>();
@@ -84,6 +85,7 @@ export class GameStage extends Stage {
       await this.loadMapAssets(this.init);
     }
     this.bomb = (await a.sprite("Bomb/Bomb00")) ?? null;
+    this.bubble = (await a.sprite("Bomb/Bubble00")) ?? null;
     // Flame/Flame ObjectTable groups reference Bomb/Fire00 (normal water-balloon
     // fire) and Bomb/TimebombFrame (special center). Both are original I16 assets.
     for (const asset of ["Bomb/Fire00", "Bomb/TimebombFrame"]) {
@@ -322,6 +324,15 @@ export class GameStage extends Stage {
           }
         } else if (this.bomb && b.alive) {
           drawLogical(r, this.bomb, 0, px, py);
+        }
+        // The original CGOBomber draw places its bubble object after the
+        // character. The bubble is anchored to the same game position.
+        if (b.bubble && this.bubble && b.bubble.asset === "Bomb/Bubble00") {
+          const img = logicalImage(this.bubble, b.bubble.frame);
+          const info = this.bubble.images?.[b.bubble.frame];
+          if (img && img.src.w > 0 && img.src.h > 0) {
+            r.draw(this.bubble, rect(px - (info?.pivotX ?? 0), py + 39 - (info?.pivotY ?? 0), img.src.w, img.src.h), { src: img.src });
+          }
         }
       }
     }

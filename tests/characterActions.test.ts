@@ -5,7 +5,7 @@ import { ORIGINAL_TICK_MS } from "../src/shared/timing.ts";
 import {
   characterActionGroup, characterActionLoops, animationGroup, animationDurationMs,
   CHARACTER_THROW_GROUP, CHARACTER_DIE_GROUP, CHARACTER_FAINT_GROUP,
-  CHARACTER_GHOST_APPEAR_GROUP, CHARACTER_GHOST_STOP_GROUP,
+  CHARACTER_GHOST_APPEAR_GROUP, CHARACTER_GHOST_STOP_GROUP, BUBBLE_OBJECT, BUBBLE_EXPKILL_GROUP, animationImageAtTicks,
 } from "../src/shared/animations.ts";
 
 function sim1() {
@@ -14,16 +14,39 @@ function sim1() {
 
 describe("CGOBomber action groups (ObjectTable)", () => {
   test("throw/die/faint/ghost group indices match the recovered tables", () => {
-    // sim dirs down/up/left/right -> Throw 18/17/16/19
-    expect(characterActionGroup("throw", 0)).toBe(18);
+    // sim dirs down/up/left/right -> Throw 19/17/16/18
+    expect(characterActionGroup("throw", 0)).toBe(19);
     expect(characterActionGroup("throw", 1)).toBe(17);
     expect(characterActionGroup("throw", 2)).toBe(16);
-    expect(characterActionGroup("throw", 3)).toBe(19);
+    expect(characterActionGroup("throw", 3)).toBe(18);
     expect(characterActionGroup("die", 0)).toBe(CHARACTER_DIE_GROUP);
     expect(characterActionGroup("faint", 0)).toBe(CHARACTER_FAINT_GROUP);
     expect(characterActionGroup("ghostAppear", 0)).toBe(CHARACTER_GHOST_APPEAR_GROUP);
     expect(characterActionGroup("ghost", 2)).toBe(CHARACTER_GHOST_STOP_GROUP[2]);
-    expect(CHARACTER_THROW_GROUP).toEqual([18, 17, 16, 19]);
+    expect(CHARACTER_THROW_GROUP).toEqual([19, 17, 16, 18]);
+  });
+
+  test("direction mapping agrees with all character ObjectTable group names", () => {
+    const dirs = ["Down", "Up", "Left", "Right"];
+    for (let ch = 0; ch <= 10; ch++) {
+      const object = `Character/C${String(ch).padStart(2, "0")}_A`;
+      for (let dir = 0; dir < dirs.length; dir++) {
+        for (const [action, name] of [["throw", "Throw"], ["walk", "Walk"], ["idle", "Stop"], ["ghost", "Ghost Stop"]] as const) {
+          expect(animationGroup(object, characterActionGroup(action, dir))?.name).toEndWith(`${name} ${dirs[dir]}`);
+        }
+      }
+    }
+  });
+
+  test("bubble Lock holds its final image and ExpKill lasts 12 ticks", () => {
+    const lock = animationGroup(BUBBLE_OBJECT, 0)!;
+    const expKill = animationGroup(BUBBLE_OBJECT, BUBBLE_EXPKILL_GROUP)!;
+    expect(lock.frames).toEqual([[0, 4], [1, 4], [2, 4], [6, -1]]);
+    expect(animationImageAtTicks(lock, 11)).toBe(2);
+    expect(animationImageAtTicks(lock, 12)).toBe(6);
+    expect(animationImageAtTicks(lock, 1000)).toBe(6);
+    expect(expKill.frames).toEqual([[3, 4], [4, 4], [5, 4]]);
+    expect(animationDurationMs(expKill)).toBe(360);
   });
 
   test("action durations: throw 180ms, faint 2550ms, die 2760ms, ghostAppear 720ms", () => {
@@ -48,7 +71,7 @@ describe("authoritative action playback", () => {
     let b = sim.snapshot().bombers[0]!;
     expect(sim.bombs.length).toBe(1);
     expect(b.action).toBe("throw");
-    expect(b.animGroup).toBe(18); // facing down
+    expect(b.animGroup).toBe(19); // facing down
     expect(b.animAsset).toBe("Character/C00-Throw_A");
     for (let i = 0; i < 6; i++) sim.tick(ORIGINAL_TICK_MS);
     b = sim.snapshot().bombers[0]!;
@@ -67,9 +90,16 @@ describe("authoritative action playback", () => {
     expect(snap.alive).toBe(false);
     expect(snap.action).toBe("die");
     expect(snap.animGroup).toBe(1);
-    expect(sim.presentationTicksLeft).toBe(92);
+    expect(snap.bubble).toEqual({ asset: "Bomb/Bubble00", group: 2, frame: 3 });
+    for (let i = 0; i < 4; i++) sim.tick(ORIGINAL_TICK_MS);
+    expect(sim.snapshot().bombers.find((b) => b.id === "b")?.bubble?.frame).toBe(4);
+    for (let i = 0; i < 4; i++) sim.tick(ORIGINAL_TICK_MS);
+    expect(sim.snapshot().bombers.find((b) => b.id === "b")?.bubble?.frame).toBe(5);
+    for (let i = 0; i < 4; i++) sim.tick(ORIGINAL_TICK_MS);
+    expect(sim.snapshot().bombers.find((b) => b.id === "b")?.bubble).toBeUndefined();
+    expect(sim.presentationTicksLeft).toBe(80);
     const frozenFrame = sim.frame, frozenTime = sim.snapshot().timeMs;
-    for (let i = 0; i < 91; i++) sim.tick(ORIGINAL_TICK_MS);
+    for (let i = 0; i < 79; i++) sim.tick(ORIGINAL_TICK_MS);
     expect(sim.snapshot().bombers.find((b) => b.id === "b")?.action).toBe("die");
     expect(sim.snapshot().presentation).toBe(true);
     sim.tick(ORIGINAL_TICK_MS);

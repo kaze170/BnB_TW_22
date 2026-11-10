@@ -21,6 +21,9 @@ export const OBJECT_ANIMATIONS = animationsJson as unknown as Record<string, Ani
 
 export const FLAME_OBJECT = "Flame/Flame";
 export const BOMB_OBJECT = "Bomb/Bomb";
+export const BUBBLE_OBJECT = "Bomb/Bubble";
+/** CGOBomber Die activates the ExpKill bubble (sub_44A0C8). */
+export const BUBBLE_EXPKILL_GROUP = 2;
 
 /** Simulation direction order is down/up/left/right; Flame/Flame blocks are
  * left(15)/up(30)/right(45)/down(60), matching CGOBomber direction 0/1/2/3. */
@@ -31,7 +34,7 @@ export const CHARACTER_STOP_GROUP = [15, 13, 12, 14] as const;
 /** Character/Cxx_A action groups recovered from ObjectTable + CGOBomber:
  * Throw 16–19 (dir left/up/right/down), Die 1, Faint 2, Hurrah 3, Start 24,
  * Ghost Appear 43, Ghost Stop 48–51 (left/up/right/down), Ghost Disappear 57. */
-export const CHARACTER_THROW_GROUP = [18, 17, 16, 19] as const; // sim dir down/up/left/right
+export const CHARACTER_THROW_GROUP = [19, 17, 16, 18] as const; // sim dir down/up/left/right
 export const CHARACTER_DIE_GROUP = 1;
 export const CHARACTER_FAINT_GROUP = 2;
 export const CHARACTER_HURRAH_GROUP = 3;
@@ -101,7 +104,9 @@ export function animationImageAtTicks(group: AnimationGroup | undefined, ticks: 
   const frames = group?.frames;
   if (!frames?.length) return 0;
   let t = Math.max(0, Math.floor(ticks));
-  if (loop) {
+  // A -1 duration holds forever even for looping objects: wrapping before
+  // reaching the hold would make e.g. Bomb/Bubble Lock impossible.
+  if (loop && !frames.some(([, duration]) => duration < 0)) {
     const total = frames.reduce((sum, [, duration]) => sum + (duration > 0 ? duration : 0), 0);
     if (total > 0) t %= total;
   }
