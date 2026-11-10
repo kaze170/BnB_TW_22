@@ -220,9 +220,11 @@ source rect = (sx, sy, ex-sx, ey-sy) inside frames[frameIndex]
 - **驗證**：`bun test` 18 pass / 515 expect（含 result bar geometry + kill/box credit）；`bun run preview` 輸出 `build/game_result_preview.png`（真實 GameStage + 原版結算 assets）；live `bun run smoke` SMOKE_OK 且 `gameEnd.result.rows` 包含統計。
 
 
-### 8.7 CGOBomber 動作狀態（部分已還原，轉場與死亡流程仍有差異）
+### 8.7 CGOBomber 動作狀態（部分已還原）
 - **來源及狀態機**：`CGOBomber` vtable `0x7A8E94`、更新 `sub_4503B5`；ObjectTable `Character/Cxx_A` groups：Die=1、Faint=2、Hurrah=3、Stop L/U/R/D=12–15、Throw=16–19、Walk=20–23、Start=24、Release=26、GhostAppear=43、Ghost Stop L/U/R/D=48–51、GhostDisappear=57。炸彈 packet `sub_4EC6AE` 以 `dir+16` 進 Throw；結束後回 `group-4`。勝利 `sub_44D9BC` 進 Hurrah；Die 結束後是否出現 Ghost 受 `this+12604` flag 控制；GhostAppear 結束進 group 51。Faint 的 `this+11552` counter 到 80 後回 group 15，`sub_4470AF` 的觸發路徑仍未找到。
 - **ObjectTable 素材與長度**（C00，30ms/tick）：Throw 6 ticks = 180ms、Faint 動畫表 85 ticks = 2550ms、Die 92 ticks = 2760ms、GhostAppear 24 ticks = 720ms、Ghost Stop Down 30 ticks loop、Start 78 ticks、Hurrah 204 ticks、Release 16 ticks。Faint 表長度不等於 exe 狀態的 80-tick counter。角色動作使用 `Character/Cxx-Throw_A`、`Die`、`Faint`、`Hurrah_A`、`Start_A`、`GhostInOut`、`Ghost` 對應 `LayerStatic` I16；Die/Faint 是 `CDataI16Character`，不能再加上 `frames[].y`。
-- **本切片的明確差異**：原版火焰擊殺路徑呼叫 Die（`sub_44A0C8`），不是已證實的 Faint→Die。為展示素材，目前自創 server 將致命火焰串成 **Faint→Die→GhostAppear→Ghost**，並以動畫表長度切換；這不代表原版死亡流程、Faint 觸發條件、ghost flag 或結算時序已被還原。尚未實作救援／復活，救援欄固定為 0。
-- **同步與結算**：server snapshot 傳 `action/animGroup/animFrame/animTicks/animAsset`，client 依 server 狀態畫原圖。勝負與 `gameEnd` 仍立即決定；server 自創的 `presentation` 寬限期只推進動作、不推進遊戲、計分或時鐘，最後一個 frame 清除 flag，client 才顯示報表。這個寬限期**不是 exe 結算延遲的逆向結論**。
-- **驗證**：`tests/characterActions.test.ts` 驗證 group、duration、放球轉場及賽後動作／時鐘凍結；`tools/character_preview.ts` 輸出 `build/character_action_preview.png`。Start 僅有 group 定義，目前不在開場自動播放；Release 和 GhostDisappear 尚未接上 gameplay。
+- **死亡與 Faint 修正（2026-11-08）**：原版火焰擊殺路徑呼叫 Die（`sub_44A0C8`），現在 server 不再自創 Faint→Die 串接；Die 結束時預設隱藏，僅 ghost flag 為真才進 GhostAppear。constructor 與 reset 將 `this+12604` 設為 0；`sub_44A253` 設為 1，`sub_4E0C44` 由 `sub_4F13F5`（含 `RebirthToGhost` 字串）呼叫，實際 online 封包與 ghost 模式條件尚未完整解出，故本切片不自動啟用 flag，條件分支僅測試。Faint 進入函式 `sub_4470AF` 設 counter=1，後續 79 次 update 到 80 返回 Stop Down；目前無已確認觸發路徑，故只實作與測試狀態轉場、不接到火焰。尚未實作救援／復活，救援欄固定為 0。
+- **同步與結算**：server snapshot 傳 `action/animGroup/animFrame/animTicks/animAsset`，client 依 server 狀態畫原圖。勝負與 `gameEnd` 仍立即決定；server 自創的 `presentation` 寬限期只推進死亡或條件式幽靈動作、不推進遊戲、計分或時鐘，最後一個 frame 清除 flag，client 才顯示報表。這個寬限期**不是 exe 結算延遲的逆向結論**。
+- **驗證**：`tests/characterActions.test.ts` 驗證 group、duration、放球轉場、火焰直接進 Die、預設隱藏／ghost flag 分支、Faint counter 及賽後動作／時鐘凍結；`tools/character_preview.ts` 輸出 `build/character_action_preview.png`。Start 僅有 group 定義，目前不在開場自動播放；Release 和 GhostDisappear 尚未接上 gameplay。
+
+- **整合驗證**：`tools/ui_preview.ts` 使用真實 GameStage 及 simulation，驗證終局 snapshot → gameEnd → Die → hidden → 結算畫面，並輸出 `build/game_death_preview.png` / `build/game_death_result_preview.png`；`tests/serverLifecycle.test.ts` 驗證最後 presentation frame 與計時器清理。

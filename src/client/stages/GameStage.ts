@@ -129,7 +129,7 @@ export class GameStage extends Stage {
         }
       }
       // The result report waits until the server finishes the authoritative
-      // faint/die/ghost playback (presentation clears on the final frame).
+      // death/ghost playback (presentation clears on the final frame).
       if (this.pendingResult && !m.state.presentation) {
         this.result = this.pendingResult;
         this.pendingResult = null;
@@ -289,8 +289,8 @@ export class GameStage extends Stage {
       }
       const sorted = [...snap.bombers].sort((a, b) => a.y - b.y);
       for (const b of sorted) {
-        // Dead bombers keep playing the server-driven faint/die/ghost sequence.
-        if (!b.alive && !b.action) continue;
+        // Dead bombers remain visible only while an action is playing.
+        if (b.action === "hidden" || (!b.alive && !b.action)) continue;
         const meta = init.players.find((p) => p.id === b.id);
         const ch = meta?.character ?? 0;
         const px = ox + b.x, py = oy + b.y;

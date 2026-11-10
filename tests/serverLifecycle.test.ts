@@ -131,7 +131,7 @@ test("post-match frames follow immediate gameEnd and clear presentation before t
     if (!finalFrame || finalFrame.t !== "gameFrame") throw new Error("missing final presentation frame");
     expect(finalFrame.state.presentation).toBe(false);
     expect(finalFrame.state.timeMs).toBe(frozenTime);
-    expect(finalFrame.state.bombers.find((b) => b.id !== "presentation-host")?.action).toBe("ghost");
+    expect(finalFrame.state.bombers.find((b) => b.id !== "presentation-host")?.action).toBe("hidden");
     expect(messages.lastIndexOf(finalFrame)).toBeGreaterThan(endIndex);
     expect(timers.size).toBe(0);
   } finally {

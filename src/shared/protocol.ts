@@ -178,7 +178,7 @@ export interface GameSnapshot {
   /** cell indices whose box was destroyed this frame (object removed) */
   destroyed: number[];
   /** True while the server is broadcasting post-match action playback
-   * (faint/die/ghost). Gameplay, scoring and the match clock are already
+   * (death/ghost). Gameplay, scoring and the match clock are already
    * frozen; the client defers the result overlay until this clears. */
   presentation?: boolean;
 }

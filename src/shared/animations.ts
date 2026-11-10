@@ -42,7 +42,7 @@ export const CHARACTER_GHOST_DISAPPEAR_GROUP = 57;
 
 export type CharacterAction =
   | "idle" | "walk" | "throw" | "start" | "hurrah"
-  | "faint" | "die" | "ghostAppear" | "ghost";
+  | "faint" | "die" | "ghostAppear" | "ghost" | "hidden";
 
 /** Map a simulation action + direction to the Character/Cxx_A group index. */
 export function characterActionGroup(action: CharacterAction, dir: number): number {
@@ -62,7 +62,7 @@ export function characterActionGroup(action: CharacterAction, dir: number): numb
 
 /** One-shot actions hold their final frame; idle/walk/ghost/hurrah loop. */
 export function characterActionLoops(action: CharacterAction): boolean {
-  return action === "idle" || action === "walk" || action === "ghost" || action === "hurrah";
+  return action === "idle" || action === "walk" || action === "ghost" || action === "hurrah" || action === "hidden";
 }
 
 export function animationGroup(object: string, group: number): AnimationGroup | undefined {

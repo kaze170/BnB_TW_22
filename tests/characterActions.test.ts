@@ -55,55 +55,69 @@ describe("authoritative action playback", () => {
     expect(b.action).toBe("idle");
   });
 
-  test("lethal fire drives faint -> die -> ghostAppear -> ghost", () => {
+  test("lethal fire enters Die directly and hides when the ghost flag is off", () => {
     const sim = new GameSimulation(MAP_NAMES.indexOf("Village00"), [
       { id: "a", slot: 0, character: 0 },
       { id: "b", slot: 1, character: 1 },
     ], () => 0.5);
     const victim = sim.bombers.find((b) => b.id === "b")!;
-    // Ignite a flame under the victim via a bomb owned by a.
     sim.bombs.push({ id: 999, x: victim.tx, y: victim.ty, owner: "a", timer: ORIGINAL_TICK_MS, power: 1 });
     sim.tick(ORIGINAL_TICK_MS);
     let snap = sim.snapshot().bombers.find((b) => b.id === "b")!;
     expect(snap.alive).toBe(false);
-    expect(snap.action).toBe("faint");
-    expect(snap.animGroup).toBe(2);
-    // faint lasts 85 ticks
-    for (let i = 0; i < 85; i++) sim.tick(ORIGINAL_TICK_MS);
-    snap = sim.snapshot().bombers.find((b) => b.id === "b")!;
     expect(snap.action).toBe("die");
     expect(snap.animGroup).toBe(1);
-    for (let i = 0; i < 92; i++) sim.tick(ORIGINAL_TICK_MS);
-    snap = sim.snapshot().bombers.find((b) => b.id === "b")!;
-    expect(snap.action).toBe("ghostAppear");
-    for (let i = 0; i < 24; i++) sim.tick(ORIGINAL_TICK_MS);
-    snap = sim.snapshot().bombers.find((b) => b.id === "b")!;
-    expect(snap.action).toBe("ghost");
-    expect(snap.animAsset).toBe("Character/C01-Ghost");
+    expect(sim.presentationTicksLeft).toBe(92);
+    const frozenFrame = sim.frame, frozenTime = sim.snapshot().timeMs;
+    for (let i = 0; i < 91; i++) sim.tick(ORIGINAL_TICK_MS);
+    expect(sim.snapshot().bombers.find((b) => b.id === "b")?.action).toBe("die");
+    expect(sim.snapshot().presentation).toBe(true);
+    sim.tick(ORIGINAL_TICK_MS);
+    const state = sim.snapshot();
+    snap = state.bombers.find((b) => b.id === "b")!;
+    expect(snap.action).toBe("hidden");
+    expect(snap.animAsset).toBeUndefined();
+    expect(snap.animGroup).toBeUndefined();
+    expect(snap.animFrame).toBeUndefined();
+    expect(state.presentation).toBe(false);
+    expect(state.bombers.find((b) => b.id === "a")?.action).toBe("hurrah");
+    expect(sim.frame).toBe(frozenFrame);
+    expect(state.timeMs).toBe(frozenTime);
+    expect(sim.result().durationMs).toBe(frozenTime);
   });
 
-  test("post-match presentation grace freezes the clock but animates to ghost", () => {
+  test("Die transitions to GhostAppear only with the ghost flag enabled", () => {
     const sim = new GameSimulation(MAP_NAMES.indexOf("Village00"), [
-      { id: "a", slot: 0, character: 0 },
-      { id: "b", slot: 1, character: 1 },
+      { id: "a", slot: 0, character: 0 }, { id: "b", slot: 1, character: 1 },
     ], () => 0.5);
     const victim = sim.bombers.find((b) => b.id === "b")!;
+    // Explicitly exercise the recovered conditional branch; no gameplay event
+    // currently enables this flag or claims the original packet semantics.
+    victim.ghostAfterDeath = true;
     sim.bombs.push({ id: 999, x: victim.tx, y: victim.ty, owner: "a", timer: ORIGINAL_TICK_MS, power: 1 });
     sim.tick(ORIGINAL_TICK_MS);
-    expect(sim.over).toBe(true);
-    // faint 85 + die 92 + ghostAppear 24 = 201 action-only ticks.
-    expect(sim.presentationTicksLeft).toBe(201);
-    const frozenFrame = sim.frame;
-    const frozenTime = sim.snapshot().timeMs;
-    expect(sim.snapshot().presentation).toBe(true);
-    for (let i = 0; i < 201; i++) sim.tick(ORIGINAL_TICK_MS);
+    expect(sim.presentationTicksLeft).toBe(92 + 24);
+    for (let i = 0; i < 92; i++) sim.tick(ORIGINAL_TICK_MS);
+    expect(sim.snapshot().bombers.find((b) => b.id === "b")?.action).toBe("ghostAppear");
+    for (let i = 0; i < 24; i++) sim.tick(ORIGINAL_TICK_MS);
     const snap = sim.snapshot();
-    expect(sim.presentationTicksLeft).toBe(0);
-    expect(snap.presentation).toBe(false);
     expect(snap.bombers.find((b) => b.id === "b")?.action).toBe("ghost");
-    expect(snap.bombers.find((b) => b.id === "a")?.action).toBe("hurrah");
-    expect(sim.frame).toBe(frozenFrame);
-    expect(snap.timeMs).toBe(frozenTime);
-    expect(sim.result().durationMs).toBe(frozenTime);
+    expect(snap.bombers.find((b) => b.id === "b")?.animAsset).toBe("Character/C01-Ghost");
+    expect(snap.presentation).toBe(false);
+  });
+
+  test("Faint uses the recovered state counter, not the 85-tick sheet duration", () => {
+    const sim = sim1();
+    const b = sim.bombers[0]!;
+    // sub_4470AF sets the counter to 1 on entry, then 79 updates reach 80.
+    b.action = "faint"; b.actionTicks = 0; b.dir = 2;
+    for (let i = 0; i < 78; i++) sim.tick(ORIGINAL_TICK_MS);
+    expect(b.action).toBe("faint");
+    expect(b.dir).toBe(2);
+    sim.tick(ORIGINAL_TICK_MS);
+    expect(b.action).toBe("idle");
+    expect(b.dir).toBe(0);
+    expect(sim.snapshot().bombers[0]?.animGroup).toBe(15);
+    expect(b.alive).toBe(true);
   });
 });

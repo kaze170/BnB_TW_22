@@ -126,5 +126,36 @@ sim.winner = "human"; sim.draw = false; sim.over = true;
 net.emit({ t: "gameEnd", result: sim.result() });
 game.update(30);
 await save(game, "game_result_preview.png");
+// Verify the real GameStage defers its result overlay until the terminal
+// server frame, while rendering the authoritative Die action on the field.
+game.exit();
+const death = new GameSimulation(village, [
+  { id: "human", slot: 0, character: 0 }, { id: "p2", slot: 1, character: 1 },
+], () => 0.5);
+const survivor = death.bombers[0]!, victim = death.bombers[1]!;
+// Place both characters in the open center of the original map for the preview.
+survivor.tx = 5; survivor.ty = 5; survivor.x = 200; survivor.y = 200;
+victim.tx = 7; victim.ty = 5; victim.x = 280; victim.y = 200;
+const deathInit = death.initState();
+const deathGame = new GameStage(ctx); await deathGame.enter({ init: deathInit });
+death.bombs.push({ id: 999, x: victim.tx, y: victim.ty, owner: survivor.id, timer: 30, power: 1 });
+death.tick(30);
+let deathSnap = death.snapshot();
+net.emit({ t: "gameFrame", frame: deathSnap.frame, state: deathSnap });
+net.emit({ t: "gameEnd", result: death.result() });
+if (!(deathGame as any).pendingResult || (deathGame as any).result) throw new Error("result was not deferred");
+for (let i = 0; i < 12; i++) death.tick(30);
+deathSnap = death.snapshot();
+net.emit({ t: "gameFrame", frame: deathSnap.frame, state: deathSnap });
+if (deathSnap.bombers.find((b) => b.id === "p2")?.action !== "die") throw new Error("expected Die");
+await save(deathGame, "game_death_preview.png");
+while (death.presentationTicksLeft > 0) death.tick(30);
+deathSnap = death.snapshot();
+net.emit({ t: "gameFrame", frame: deathSnap.frame, state: deathSnap });
+if (!(deathGame as any).result || (deathGame as any).pendingResult) throw new Error("result did not appear");
+if (deathSnap.bombers.find((b) => b.id === "p2")?.action !== "hidden") throw new Error("expected hidden");
+await save(deathGame, "game_death_result_preview.png");
+deathGame.exit();
+console.log("DEATH_PRESENTATION_OK");
 console.log(JSON.stringify({ renderer: renderer.kind, map: init.map, frame: snap.frame, bombs: snap.bombs.length, fire: snap.explosions.length, items: snap.items.length, alive: snap.bombers.filter((b) => b.alive).length }));
 console.log("UI_PREVIEW_OK");

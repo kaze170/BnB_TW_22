@@ -38,7 +38,7 @@ export class GameServer {
   private rooms = new Map<number, Room>();
   private nextRoom = 1;
   private sims = new Map<number, { sim: GameSimulation; timer: ReturnType<typeof setInterval> }>();
-  /** Post-match action-only playback (faint/die/ghost). The match timer is
+  /** Post-match action-only playback (death/ghost). The match timer is
    * already stopped and gameEnd already sent; these frames only animate. */
   private presentations = new Map<number, { sim: GameSimulation; timer: ReturnType<typeof setInterval> }>();
   /** Players that acknowledged the result screen; room stays closed until all return. */
@@ -370,7 +370,7 @@ export class GameServer {
         }
         this.broadcastLobby();
         // Server-original presentation grace: keep broadcasting action-only
-        // frames so the faint -> die -> ghost sequence is visible before the
+        // frames so the death animation is visible before the
         // client covers the field with the result report. gameEnd was already
         // sent immediately (authoritative outcome is unchanged).
         if (sim.presentationTicksLeft > 0) this.startPresentation(room, sim);
