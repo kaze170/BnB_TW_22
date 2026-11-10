@@ -17,6 +17,8 @@ import {
 import { ORIGINAL_TICK_MS } from "../shared/timing.ts";
 import {
   FLAME_OBJECT, animationGroup, flameCenterGroup, flameArmGroup,
+  characterActionGroup, characterActionLoops, animationImageAtTicks,
+  type CharacterAction,
 } from "../shared/animations.ts";
 
 export interface SimPlayer {
@@ -35,6 +37,9 @@ export interface SimPlayer {
   aiTimer: number;
   /** server-original result stats */
   kills: number; deaths: number; boxes: number; items: number;
+  /** Authoritative CGOBomber action + elapsed ticks (ObjectTable playback). */
+  action: CharacterAction;
+  actionTicks: number;
 }
 interface Bomb { id: number; x: number; y: number; owner: string; timer: number; power: number; }
 type FireRole = "center" | "arm" | "tip";
@@ -64,6 +69,11 @@ export class GameSimulation {
   items: Item[] = [];
   frame = 0;
   over = false;
+  /** Server-original post-match presentation grace: action-only ticks still to
+   * broadcast before the client covers the field with the result report. This
+   * is NOT an exe-recovered result-screen delay; gameplay/scoring are already
+   * frozen when `over` becomes true. */
+  presentationTicksLeft = 0;
   winner: string | null = null;
   draw = false;
   private nextId = 1;
@@ -96,6 +106,7 @@ export class GameSimulation {
         speedCap: st.speedCap, bombCap: st.bombCap, powerCap: st.powerCap, baseSpeed: st.speed,
         input: { dx: 0, dy: 0, bomb: false }, bombLatch: false, aiTimer: 0,
         kills: 0, deaths: 0, boxes: 0, items: 0,
+        action: "idle", actionTicks: 0,
       });
     });
   }
@@ -123,6 +134,56 @@ export class GameSimulation {
     if (b) {
       b.alive = false;
       b.input = { dx: 0, dy: 0, bomb: false };
+      this.beginAction(b, "die");
+    }
+  }
+
+  // ---- CGOBomber action state (ObjectTable groups, 30ms tick domain) ----
+  private actionDurationTicks(b: SimPlayer, action: CharacterAction = b.action): number {
+    const group = animationGroup(`Character/C${String(b.character).padStart(2, "0")}_A`, characterActionGroup(action, b.dir));
+    if (!group) return 0;
+    return group.frames.reduce((sum, [, d]) => sum + (d > 0 ? d : 0), 0);
+  }
+  /** Longest remaining one-shot death sequence across the field. The winner's
+   * Hurrah loops, so it does not extend the grace; it plays during the sequence. */
+  private terminalPresentationTicks(): number {
+    let max = 0;
+    for (const b of this.bombers) {
+      if (b.alive) continue;
+      const left = (a: CharacterAction) => Math.max(0, this.actionDurationTicks(b, a) - (b.action === a ? b.actionTicks : 0));
+      let n = 0;
+      if (b.action === "faint") n = left("faint") + this.actionDurationTicks(b, "die") + this.actionDurationTicks(b, "ghostAppear");
+      else if (b.action === "die") n = left("die") + this.actionDurationTicks(b, "ghostAppear");
+      else if (b.action === "ghostAppear") n = left("ghostAppear");
+      max = Math.max(max, n);
+    }
+    return max;
+  }
+  private beginAction(b: SimPlayer, action: CharacterAction) {
+    b.action = action;
+    b.actionTicks = 0;
+  }
+  /** One-shot actions block grid movement (CGOBomber sub_446580 excludes them). */
+  private actionLocks(b: SimPlayer): boolean {
+    return b.action === "throw" || b.action === "start" || b.action === "faint"
+      || b.action === "die" || b.action === "ghostAppear";
+  }
+  private stepActions(dtMs: number) {
+    const ticks = Math.max(1, Math.round(dtMs / ORIGINAL_TICK_MS));
+    for (const b of this.bombers) {
+      b.actionTicks += ticks;
+      if (characterActionLoops(b.action)) continue;
+      const dur = this.actionDurationTicks(b);
+      if (dur <= 0 || b.actionTicks < dur) continue;
+      // Server-authoritative transitions: start/throw -> idle; the death
+      // sequence faint -> die -> ghostAppear -> ghost (no rescue in this slice).
+      switch (b.action) {
+        case "start": case "throw": this.beginAction(b, "idle"); break;
+        case "faint": this.beginAction(b, "die"); break;
+        case "die": this.beginAction(b, "ghostAppear"); break;
+        case "ghostAppear": this.beginAction(b, "ghost"); break;
+        default: this.beginAction(b, "idle"); break;
+      }
     }
   }
 
@@ -162,6 +223,10 @@ export class GameSimulation {
     if (!seg) return false;
     b.alive = false;
     b.deaths++;
+    b.moving = false;
+    b.input = { dx: 0, dy: 0, bomb: false };
+    // CGOBomber death visual: Faint (trapped/dizzy) then Die then ghost.
+    this.beginAction(b, "faint");
     if (seg.owner !== b.id) {
       const killer = this.bombers.find((x) => x.id === seg.owner);
       if (killer) killer.kills++;
@@ -197,13 +262,27 @@ export class GameSimulation {
   }
 
   tick(dtMs: number) {
-    if (this.over) return;
+    if (this.over) {
+      // Post-match: gameplay/scoring/clock are frozen; only the authoritative
+      // action playback advances so clients can see faint -> die -> ghost.
+      this.stepActions(dtMs);
+      const ticks = Math.max(1, Math.round(dtMs / ORIGINAL_TICK_MS));
+      this.presentationTicksLeft = Math.max(0, this.presentationTicksLeft - ticks);
+      return;
+    }
     this.frame++;
     this.destroyed = [];
-    for (const b of this.bombers) if (b.alive && b.bot) this.botThink(b, dtMs);
-    for (const b of this.bombers) if (b.alive) this.move(b, dtMs);
+    this.stepActions(dtMs);
+    for (const b of this.bombers) if (b.alive && b.bot && !this.actionLocks(b)) this.botThink(b, dtMs);
+    for (const b of this.bombers) if (b.alive && !this.actionLocks(b)) this.move(b, dtMs);
     for (const b of this.bombers) if (b.alive) this.pickup(b);
-    for (const b of this.bombers) if (b.alive) this.tryBomb(b);
+    for (const b of this.bombers) if (b.alive && !this.actionLocks(b)) this.tryBomb(b);
+    // Walk/idle are presentation states derived from the authoritative move.
+    for (const b of this.bombers) {
+      if (!b.alive || this.actionLocks(b)) continue;
+      const next: CharacterAction = b.moving ? "walk" : "idle";
+      if (b.action !== next) this.beginAction(b, next);
+    }
     // Advance existing flame counters before this tick's detonations so newly
     // scheduled segments start at counter 0 (frame 0) and live their full count.
     this.stepFires(dtMs);
@@ -222,6 +301,9 @@ export class GameSimulation {
       this.over = true;
       this.winner = alive[0]?.id ?? null;
       this.draw = alive.length === 0;
+      const w = alive[0];
+      if (w) { w.moving = false; this.beginAction(w, "hurrah"); }
+      this.presentationTicksLeft = this.terminalPresentationTicks();
     }
   }
 
@@ -261,6 +343,8 @@ export class GameSimulation {
     if (owned >= b.bombCount) return;
     if (this.bombAt(b.tx, b.ty)) return;
     this.bombs.push({ id: this.nextId++, x: b.tx, y: b.ty, owner: b.id, timer: FUSE_MS, power: b.power });
+    // CGOBomber enters Throw Left/Up/Right/Down (groups 16–19) on placement.
+    this.beginAction(b, "throw");
   }
 
   private explode(bomb: Bomb) {
@@ -413,10 +497,19 @@ export class GameSimulation {
   }
 
   snapshot(): GameSnapshot {
-    const bombers: BomberState[] = this.bombers.map((b) => ({
-      id: b.id, x: b.x, y: b.y, dir: b.dir, alive: b.alive,
-      speed: b.speed, bombCount: b.bombCount, power: b.power, bot: b.bot, moving: b.moving,
-    }));
+    const bombers: BomberState[] = this.bombers.map((b) => {
+      const object = `Character/C${String(b.character).padStart(2, "0")}_A`;
+      const groupIndex = characterActionGroup(b.action, b.dir);
+      const group = animationGroup(object, groupIndex);
+      const loop = characterActionLoops(b.action);
+      return {
+        id: b.id, x: b.x, y: b.y, dir: b.dir, alive: b.alive,
+        speed: b.speed, bombCount: b.bombCount, power: b.power, bot: b.bot, moving: b.moving,
+        action: b.action, animGroup: groupIndex, animTicks: b.actionTicks,
+        animFrame: animationImageAtTicks(group, b.actionTicks, loop),
+        animAsset: group?.asset,
+      };
+    });
     const explosions = this.fires.flatMap((cell) => {
       const seg = this.activeSegment(cell);
       if (!seg) return []; // propagation delay not yet active
@@ -438,6 +531,7 @@ export class GameSimulation {
       explosions,
       items: this.items.map((i) => ({ id: i.id, x: i.x, y: i.y, item: i.asset })),
       destroyed: this.destroyed,
+      presentation: this.over && this.presentationTicksLeft > 0,
     };
   }
 }

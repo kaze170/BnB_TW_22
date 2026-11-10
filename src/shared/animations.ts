@@ -28,6 +28,42 @@ export const FLAME_DIR_FROM_SIM = [3, 1, 0, 2] as const;
 /** Character/Cxx_A walk groups: 20 left, 21 up, 22 right, 23 down. */
 export const CHARACTER_WALK_GROUP = [23, 21, 20, 22] as const;
 export const CHARACTER_STOP_GROUP = [15, 13, 12, 14] as const;
+/** Character/Cxx_A action groups recovered from ObjectTable + CGOBomber:
+ * Throw 16–19 (dir left/up/right/down), Die 1, Faint 2, Hurrah 3, Start 24,
+ * Ghost Appear 43, Ghost Stop 48–51 (left/up/right/down), Ghost Disappear 57. */
+export const CHARACTER_THROW_GROUP = [18, 17, 16, 19] as const; // sim dir down/up/left/right
+export const CHARACTER_DIE_GROUP = 1;
+export const CHARACTER_FAINT_GROUP = 2;
+export const CHARACTER_HURRAH_GROUP = 3;
+export const CHARACTER_START_GROUP = 24;
+export const CHARACTER_GHOST_APPEAR_GROUP = 43;
+export const CHARACTER_GHOST_STOP_GROUP = [51, 49, 48, 50] as const; // sim dir down/up/left/right
+export const CHARACTER_GHOST_DISAPPEAR_GROUP = 57;
+
+export type CharacterAction =
+  | "idle" | "walk" | "throw" | "start" | "hurrah"
+  | "faint" | "die" | "ghostAppear" | "ghost";
+
+/** Map a simulation action + direction to the Character/Cxx_A group index. */
+export function characterActionGroup(action: CharacterAction, dir: number): number {
+  const d = ((dir % 4) + 4) % 4;
+  switch (action) {
+    case "walk": return CHARACTER_WALK_GROUP[d]!;
+    case "throw": return CHARACTER_THROW_GROUP[d]!;
+    case "start": return CHARACTER_START_GROUP;
+    case "hurrah": return CHARACTER_HURRAH_GROUP;
+    case "faint": return CHARACTER_FAINT_GROUP;
+    case "die": return CHARACTER_DIE_GROUP;
+    case "ghostAppear": return CHARACTER_GHOST_APPEAR_GROUP;
+    case "ghost": return CHARACTER_GHOST_STOP_GROUP[d]!;
+    default: return CHARACTER_STOP_GROUP[d]!;
+  }
+}
+
+/** One-shot actions hold their final frame; idle/walk/ghost/hurrah loop. */
+export function characterActionLoops(action: CharacterAction): boolean {
+  return action === "idle" || action === "walk" || action === "ghost" || action === "hurrah";
+}
 
 export function animationGroup(object: string, group: number): AnimationGroup | undefined {
   return OBJECT_ANIMATIONS[object]?.[group];

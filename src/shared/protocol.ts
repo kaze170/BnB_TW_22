@@ -124,6 +124,16 @@ export interface BomberState {
   bot: boolean;
   /** true while the authoritative grid move is in progress (walk animation). */
   moving?: boolean;
+  /** Authoritative CGOBomber action state (ObjectTable group playback). */
+  action?: import("./animations.ts").CharacterAction;
+  /** Character/Cxx_A animation group index chosen by the server. */
+  animGroup?: number;
+  /** Logical I16 image index within animAsset, advanced by the server tick. */
+  animFrame?: number;
+  /** Ticks elapsed in the current action (30ms domain). */
+  animTicks?: number;
+  /** ObjectTable asset for the current action, e.g. Character/C00-Throw_A. */
+  animAsset?: string;
 }
 export interface BombState {
   id: number;
@@ -167,6 +177,10 @@ export interface GameSnapshot {
   items: ItemState[];
   /** cell indices whose box was destroyed this frame (object removed) */
   destroyed: number[];
+  /** True while the server is broadcasting post-match action playback
+   * (faint/die/ghost). Gameplay, scoring and the match clock are already
+   * frozen; the client defers the result overlay until this clears. */
+  presentation?: boolean;
 }
 export interface ResultRow {
   id: string;

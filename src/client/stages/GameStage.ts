@@ -41,6 +41,8 @@ export class GameStage extends Stage {
   private bg: Sprite | null = null;
   private tiles = new Map<string, Sprite>();
   private chars = new Map<number, Map<number, Sprite>>();
+  /** Action I16 sheets keyed by ObjectTable asset (e.g. Character/C00-Throw_A). */
+  private charActions = new Map<string, Sprite>();
   private portraits = new Map<number, Sprite>();
   private bomb: Sprite | null = null;
   private fireSprites = new Map<string, Sprite>();
@@ -58,6 +60,9 @@ export class GameStage extends Stage {
   private okBtn: Button | null = null;
   private destroyedSet = new Set<number>();
   private result: GameResult | null = null;
+  /** gameEnd arrives immediately, but the overlay waits for the authoritative
+   * post-match action playback (snapshot.presentation) to finish. */
+  private pendingResult: GameResult | null = null;
   private returnRequested = false;
   private offs: Array<() => void> = [];
   private sendAcc = 0;
@@ -123,8 +128,18 @@ export class GameStage extends Stage {
           this.walkTicks.set(b.id, 0);
         }
       }
+      // The result report waits until the server finishes the authoritative
+      // faint/die/ghost playback (presentation clears on the final frame).
+      if (this.pendingResult && !m.state.presentation) {
+        this.result = this.pendingResult;
+        this.pendingResult = null;
+      }
     }));
-    this.offs.push(this.ctx.net.on("gameEnd", (m) => { if (m.t === "gameEnd") this.result = m.result; }));
+    this.offs.push(this.ctx.net.on("gameEnd", (m) => {
+      if (m.t !== "gameEnd") return;
+      if (this.snap?.presentation) this.pendingResult = m.result;
+      else this.result = m.result;
+    }));
     this.offs.push(this.ctx.net.on("roomState", (m) => {
       if (m.t === "roomState" && this.returnRequested && m.room.state !== "playing") {
         this.ctx.changeStage("prepare", { room: m.room });
@@ -149,7 +164,14 @@ export class GameStage extends Stage {
         if (s) m.set(d, s);
       }
       this.chars.set(ch, m);
-      const portrait = await a.sprite(`Character/C${String(ch).padStart(2, "0")}-Portrait_ALayerStatic`);
+      // CGOBomber action sheets: Throw/Die/Faint/Hurrah/Start/Ghost (ObjectTable).
+      const prefix = `Character/C${String(ch).padStart(2, "0")}`;
+      for (const suffix of ["Throw_A", "Die", "Faint", "Hurrah_A", "Start_A", "Ghost", "GhostInOut"]) {
+        const asset = `${prefix}-${suffix}`;
+        const s = await a.sprite(`${asset}LayerStatic`);
+        if (s) this.charActions.set(asset, s);
+      }
+      const portrait = await a.sprite(`${prefix}-Portrait_ALayerStatic`);
       if (portrait) this.portraits.set(ch, portrait);
     }));
   }
@@ -267,25 +289,38 @@ export class GameStage extends Stage {
       }
       const sorted = [...snap.bombers].sort((a, b) => a.y - b.y);
       for (const b of sorted) {
-        if (!b.alive) continue;
+        // Dead bombers keep playing the server-driven faint/die/ghost sequence.
+        if (!b.alive && !b.action) continue;
         const meta = init.players.find((p) => p.id === b.id);
-        const anim = this.chars.get(meta?.character ?? 0)?.get(b.dir);
+        const ch = meta?.character ?? 0;
         const px = ox + b.x, py = oy + b.y;
-        if (anim) {
-          const count = imageCount(anim);
-          const chName = `Character/C${String(meta?.character ?? 0).padStart(2, "0")}_A`;
+        // Prefer the authoritative action sheet/frame; fall back to walk sprites.
+        let anim: Sprite | undefined;
+        let frame = 0;
+        if (b.animAsset) {
+          anim = this.charActions.get(b.animAsset);
+          frame = b.animFrame ?? 0;
+        }
+        if (!anim) {
+          anim = this.chars.get(ch)?.get(b.dir);
+          const chName = `Character/C${String(ch).padStart(2, "0")}_A`;
           const walkGroup = animationGroup(chName, CHARACTER_WALK_GROUP[b.dir] ?? 23);
-          const frame = this.moving.has(b.id)
+          frame = this.moving.has(b.id)
             ? animationImageAtTicks(walkGroup, this.walkTicks.get(b.id) ?? 0)
             : 0;
+        }
+        if (anim) {
+          const count = imageCount(anim);
           const img = logicalImage(anim, Math.min(frame, count - 1));
-          if (img) {
+          if (img && img.src.w > 0 && img.src.h > 0) {
             const baseDy = anim.images?.[0]?.dy ?? img.dy;
             const x = px + TILE / 2 - img.src.w / 2 + img.dx;
             const y = py + TILE - img.src.h + (img.dy - baseDy);
+            // Ghost sheets are the original translucent-looking I16 art; no
+            // extra client alpha is invented on top of them.
             r.draw(anim, rect(x, y, img.src.w, img.src.h), { src: img.src });
           }
-        } else if (this.bomb) {
+        } else if (this.bomb && b.alive) {
           drawLogical(r, this.bomb, 0, px, py);
         }
       }

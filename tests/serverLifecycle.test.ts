@@ -86,3 +86,57 @@ describe("original server room lifecycle", () => {
     }
   });
 });
+
+test("post-match frames follow immediate gameEnd and clear presentation before timer cleanup", () => {
+  const server = new GameServer();
+  const host = socket();
+  server.open(host);
+  send(server, host, { t: "login", id: "presentation-host", pw: "" });
+  send(server, host, { t: "selectServer", server: 1 });
+  send(server, host, { t: "selectChannel", channel: 0 });
+  send(server, host, { t: "createRoom", title: "presentation", map: MAP_NAMES.indexOf("Village00"), mode: 0 });
+  const created = last(host, "roomState");
+  if (!created || created.t !== "roomState") throw new Error("missing room");
+  const roomId = created.room.id;
+  const realSetInterval = globalThis.setInterval, realClearInterval = globalThis.clearInterval;
+  const realNow = performance.now;
+  const timers = new Map<number, () => void>();
+  let now = 0, nextId = 1;
+  performance.now = () => now;
+  globalThis.setInterval = ((handler: (...args: any[]) => void, _ms?: number, ...args: any[]) => {
+    const id = nextId++;
+    timers.set(id, () => handler(...args));
+    return id as unknown as ReturnType<typeof setInterval>;
+  }) as typeof setInterval;
+  globalThis.clearInterval = ((id?: ReturnType<typeof setInterval>) => { timers.delete(id as unknown as number); }) as typeof clearInterval;
+  try {
+    send(server, host, { t: "startGame" });
+    const sims = (server as unknown as { sims: Map<number, { sim: GameSimulation }> }).sims;
+    const sim = sims.get(roomId)!.sim;
+    for (const b of sim.bombers) if (b.id !== "presentation-host") sim.removePlayer(b.id);
+    now += 30;
+    timers.get(1)!();
+    const messages = fake(host).messages;
+    const endIndex = messages.findIndex((m) => m.t === "gameEnd");
+    expect(endIndex).toBeGreaterThan(0);
+    const initialFrame = messages[endIndex - 1]!;
+    expect(initialFrame.t).toBe("gameFrame");
+    if (initialFrame.t !== "gameFrame") throw new Error("missing terminal frame");
+    expect(initialFrame.state.presentation).toBe(true);
+    expect(timers.has(1)).toBe(false);
+    expect(timers.has(2)).toBe(true);
+    const frozenTime = initialFrame.state.timeMs;
+    while (timers.has(2)) { now += 30; timers.get(2)!(); }
+    const finalFrame = last(host, "gameFrame");
+    if (!finalFrame || finalFrame.t !== "gameFrame") throw new Error("missing final presentation frame");
+    expect(finalFrame.state.presentation).toBe(false);
+    expect(finalFrame.state.timeMs).toBe(frozenTime);
+    expect(finalFrame.state.bombers.find((b) => b.id !== "presentation-host")?.action).toBe("ghost");
+    expect(messages.lastIndexOf(finalFrame)).toBeGreaterThan(endIndex);
+    expect(timers.size).toBe(0);
+  } finally {
+    performance.now = realNow;
+    globalThis.setInterval = realSetInterval;
+    globalThis.clearInterval = realClearInterval;
+  }
+});

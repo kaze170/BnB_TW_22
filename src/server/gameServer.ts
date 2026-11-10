@@ -38,6 +38,9 @@ export class GameServer {
   private rooms = new Map<number, Room>();
   private nextRoom = 1;
   private sims = new Map<number, { sim: GameSimulation; timer: ReturnType<typeof setInterval> }>();
+  /** Post-match action-only playback (faint/die/ghost). The match timer is
+   * already stopped and gameEnd already sent; these frames only animate. */
+  private presentations = new Map<number, { sim: GameSimulation; timer: ReturnType<typeof setInterval> }>();
   /** Players that acknowledged the result screen; room stays closed until all return. */
   private returned = new Map<number, Set<string>>();
 
@@ -260,6 +263,7 @@ export class GameServer {
     if (entry) entry.sim.removePlayer(c.id);
     if (room.players.length === 0) {
       this.stopSimulation(room.id);
+      this.stopPresentation(room.id);
       this.rooms.delete(room.id);
       this.returned.delete(room.id);
     } else {
@@ -284,6 +288,7 @@ export class GameServer {
     if (room.state !== "results") return;
     const set = this.returned.get(room.id) ?? new Set<string>();
     if (!room.players.every((p) => set.has(p.id))) return;
+    this.stopPresentation(room.id);
     room.state = "waiting";
     for (const p of room.players) p.ready = p.id === room.hostId;
     this.returned.delete(room.id);
@@ -355,17 +360,49 @@ export class GameServer {
         // result screen until it requests the return.
         room.state = "results";
         this.returned.set(room.id, new Set());
+        const result = sim.result();
         for (const p of room.players) {
           const pc = this.clientById(p.id);
           if (pc) {
-            this.send(pc.ws, { t: "gameEnd", result: sim.result() });
+            this.send(pc.ws, { t: "gameEnd", result });
             this.send(pc.ws, { t: "roomState", room });
           }
         }
         this.broadcastLobby();
+        // Server-original presentation grace: keep broadcasting action-only
+        // frames so the faint -> die -> ghost sequence is visible before the
+        // client covers the field with the result report. gameEnd was already
+        // sent immediately (authoritative outcome is unchanged).
+        if (sim.presentationTicksLeft > 0) this.startPresentation(room, sim);
       }
     }, ORIGINAL_TICK_MS);
     this.sims.set(room.id, { sim, timer });
+  }
+
+  private startPresentation(room: Room, sim: GameSimulation) {
+    const stepper = new FixedStepper();
+    let last = performance.now();
+    const timer = setInterval(() => {
+      const now = performance.now();
+      const steps = stepper.add(now - last);
+      last = now;
+      for (let i = 0; i < steps && sim.presentationTicksLeft > 0; i++) sim.tick(ORIGINAL_TICK_MS);
+      if (steps > 0) {
+        const snap = sim.snapshot();
+        for (const p of room.players) {
+          const pc = this.clientById(p.id);
+          if (pc) this.send(pc.ws, { t: "gameFrame", frame: snap.frame, state: snap });
+        }
+      }
+      if (sim.presentationTicksLeft <= 0) this.stopPresentation(room.id);
+    }, ORIGINAL_TICK_MS);
+    this.presentations.set(room.id, { sim, timer });
+  }
+
+  private stopPresentation(roomId: number) {
+    const entry = this.presentations.get(roomId);
+    if (entry) clearInterval(entry.timer);
+    this.presentations.delete(roomId);
   }
 }
 
